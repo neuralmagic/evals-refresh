@@ -9,7 +9,7 @@ agent-detector==2.0.0
 aiofile==3.12.3
 aiofiles==25.1.0
 aiohappyeyeballs==2.7.1
-aiohttp==3.14.3
+aiohttp==3.14.4
 aiosignal==1.4.0
 amd-aiter @ file:///install/amd_aiter-0.1.23-cp312-cp312-linux_x86_64.whl#sha256=575e89a08049484cc99a34c1b0d38208e3bb8ff310ef382b2b1fb4975ff960cb
 amd-quark==0.12.post1
