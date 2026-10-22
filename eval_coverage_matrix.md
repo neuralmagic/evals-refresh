@@ -74,7 +74,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 | 1 | BigCodeBench | agentic-and-coding | code-gen | sandbox |  | inspect_evals | bigcodebench | DeepSeek-V4 |
 | 1 | DROP | knowledge-and-reasoning | general-reasoning | none |  | inspect_evals | drop | DeepSeek-V4 |
 | 1 | DocVQA | multimodal | doc-understanding | none |  | inspect_evals | docvqa | DeepSeek-V4 |
-| 1 | GSM8K | knowledge-and-reasoning | math-reasoning | none |  | inspect_evals | gsm8k | DeepSeek-V4 |
+| 1 | GSM8K | knowledge-and-reasoning | math-reasoning | none | ✅ | inspect_evals | gsm8k | DeepSeek-V4 |
 | 1 | HealthBench | knowledge-and-reasoning | domain-professional | none |  | inspect_evals | healthbench | Qwen3.8 |
 | 1 | HellaSwag | knowledge-and-reasoning | general-reasoning | none |  | inspect_evals | hellaswag | DeepSeek-V4 |
 | 1 | HumanEval | agentic-and-coding | code-gen | sandbox |  | inspect_evals | humaneval | DeepSeek-V4 |
@@ -316,7 +316,7 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 | ✗ | 4 | IMOAnswerBench | none |  |  |
 | ✔ | 3 | AIME 2026 | none | aime2026 | ✅ |
 | ✗ | 2 | MathArena Apex | none |  |  |
-| ✔ | 1 | GSM8K | none | gsm8k |  |
+| ✔ | 1 | GSM8K | none | gsm8k | ✅ |
 | ✔ | 1 | MATH | none | math |  |
 | ✔ | 1 | MGSM | none | mgsm |  |
 | ~ | 1 | MATH-500 | none |  |  |
