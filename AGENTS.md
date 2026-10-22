@@ -71,6 +71,19 @@ which git ignores; read it too if it exists.
   the newest copies of that task under every model. If a pull brings a task dir that you also have locally, the two
   are probably different runs: compare them, ask the user which one is final, and move the other out of the repo
   with its logs (a README must match the logs next to it).
+- **`git add` a new task dir's files as soon as you create them (stage only, never commit), and re-check/re-stage
+  after every wait on a long-running eval.** On at least one host, this repo's working tree has been observed to
+  lose new task-dir files entirely, including ones already `git add`-staged: not just `git clean -fd` (which
+  would spare staged files) but at least once also reverting the index itself (`git status` showed staged `A`
+  entries become `AD`, i.e. added-in-index but deleted-from-worktree, then disappear from the index too), and it
+  has hit a directory *mid-run* (a `vllm serve` process survives with its cwd shown as `(deleted)` in `ps`/`/proc`,
+  confirming the directory itself was unlinked while open, not just emptied) as well as an unrelated, already
+  finished task dir's files at the same time. Staging is a cheap, harmless precaution (it does not commit or
+  push) but is not a reliable fix by itself; the only durable record is what you report inline in chat (full
+  results, not just a log filename) as you go, in case files need to be recreated afterward. If this happens
+  mid-eval, check for orphaned GPU-holding processes from the lost directory (`ps aux`, `chg status`) and kill
+  them before relaunching, recreate the directory from what you already wrote, re-stage, and keep going; do not
+  spend an open-ended amount of time root-causing the sync mechanism itself unless the user asks.
 - **Reflect after every eval and every meaningful piece of work, and write the general lessons into the notes.**
   This is mandatory; section 12 gives the procedure.
 - **Keep every agent instruction in this file.** `CLAUDE.md` only imports it (`@AGENTS.md`), so Claude Code and
@@ -115,14 +128,41 @@ which git ignores; read it too if it exists.
 Three environments, deliberately separate. They are local to each user and server, so create your own, name and place
 them as you like, and point `local_orchestrator.sh` at them; it is the only file that knows their paths.
 
+**Use `uv` by default** to create and install into every environment (server, `inspect_evals` client,
+`inspect_harbor` client). If no particular Python version is required:
+
+```bash
+uv venv .venv
+source .venv/bin/activate
+uv pip install --python .venv <package-spec-or--r-requirements-file>
+```
+
+If a Python version is required (e.g. a vLLM recipe or a task pins one), name the venv after it so
+multiple versions can coexist:
+
+```bash
+uv venv --python 3.11 .venv-py311
+source .venv-py311/bin/activate
+uv pip install --python .venv-py311 <package-spec-or--r-requirements-file>
+```
+
+If `uv` is not available on the host, fall back to the standard library, same venv names:
+
+```bash
+python3 -m venv .venv                  # or: python3.11 -m venv .venv-py311
+source .venv/bin/activate              # or: source .venv-py311/bin/activate
+pip install <package-spec-or--r-requirements-file>
+```
+
 | environment | used by | create with |
 |---|---|---|
-| vLLM server | `serve.sh` | `pip install vllm` |
-| Inspect client for `inspect_evals` tasks | `run_eval.sh` | `pip install inspect-evals openai` |
-| Inspect client for `inspect_harbor` tasks | `run_eval.sh` | `pip install inspect-harbor httpx2 "openai==3.14.0"` |
+| vLLM server | `serve.sh` | `uv pip install vllm` |
+| Inspect client for `inspect_evals` tasks | `run_eval.sh` | `uv pip install inspect-evals openai` |
+| Inspect client for `inspect_harbor` tasks | `run_eval.sh` | `uv pip install inspect-harbor httpx2 "openai==3.14.0"` |
 
 These installs are the starting point for a new task. To reproduce a dir's results, create the environments from its
-`server_requirements.txt` and `client_requirements.txt` instead, as its README Setup shows.
+`server_requirements.txt` and `client_requirements.txt` instead (same `uv venv` / `uv pip install` pattern, substituting
+`-r server_requirements.txt` / `-r client_requirements.txt` for the package spec), as its README Setup shows.
 
 `inspect-harbor` depends on `litellm`, which pins `openai<3`, while Inspect's OpenAI-compatible
 providers need `openai>=3`; installing `openai==3.14.0` last overrides the pin and the resulting
@@ -204,8 +244,11 @@ Python.
 1. Create `<org>_<model>/<category>/<task>/` by copying the closest existing task dir. For a task listed in
    section 11, copy the dir named there, which carries the leak fixes.
 2. `serve.sh`: rewrite from the model's vLLM recipe. Keep only what the recipe says plus
-   `--tensor-parallel-size`, `--data-parallel-size`, `--served-model-name`, `--host/--port`.
-   Confirm the reasoning parser and tool parser names exist in the installed vLLM
+   `--tensor-parallel-size`, `--data-parallel-size`, `--served-model-name`, `--host/--port`. Before
+   `local_orchestrator.sh` launches it, check how many GPUs are actually free and confirm every parallelism degree
+   the command sets (tensor × data × pipeline × expert) does not exceed that count, and launch through `chg` if it
+   is installed (`local_env_notes.md`, "Serving", has the exact commands). Confirm the reasoning parser and tool
+   parser names exist in the installed vLLM
    (`vllm/reasoning/__init__.py`, `vllm/tool_parsers/__init__.py`) and that the architecture in
    the model's `config.json` is in `vllm/model_executor/models/registry.py`. If the recipe uses a
    custom chat template, copy it into `assets/` byte-identical and point `--chat-template` at it.
@@ -264,6 +307,113 @@ Python.
   It is noise if it appears at the moment the eval finished.
 - **Inspect's multiple-choice parser** requires `ANSWER: <LETTER>` on the last line; a model that
   writes `ANSWER: $A` can never be parsed. Check the unparsed count.
+- **vLLM's YaRN `--hf-overrides` needs the top-level `max_position_embeddings` bumped too**, not
+  just `rope_scaling`. `derived_max_model_len` (`vllm/config/model.py`) rejects `--max-model-len`
+  above the config's `max_position_embeddings` *before* applying any scaling, and its comment
+  says so explicitly for `rope_type="yarn"` ("YaRN variants leave max_position_embeddings already
+  scaled") — unlike other rope types, it does not auto-multiply by `factor` for you. The actual
+  rotary-embedding math only reads `rope_scaling.original_max_position_embeddings`/`factor`, so
+  this bump is purely to satisfy the validator: set both, e.g. for Qwen3-8B's card-validated
+  config, `--hf-overrides '{"max_position_embeddings": 131072, "rope_scaling": {"rope_type":
+  "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}}' --max-model-len 131072`.
+  There is no standalone `--rope-scaling` CLI flag in vLLM 0.31.0 despite some model cards' `vllm
+  serve` examples implying one; `--hf-overrides` is the equivalent (forwards a dict into the HF
+  config, same as hand-editing `config.json`).
+- **`inspect score <log>` can't load a task-embedded custom scorer**: it is only registered as an
+  import side effect of its task module (e.g. `inspect_evals.niah.niah`), which `inspect eval`
+  triggers by loading the task spec but a bare `inspect score` CLI process never does ("couldn't
+  be loaded... provide a path to the file"). This also blocks passing non-string scorer args
+  (e.g. a scorer-building callable) back through `-S`. Workaround: a short script using
+  `inspect_ai`'s own public API — `from inspect_ai import score; from inspect_ai.log import
+  read_eval_log, write_eval_log`; import the scorer factory directly from the task's module,
+  reconstruct it exactly as the task does, call `score(log, [scorer], model_roles={"grader":
+  get_model(...)}, action="overwrite")`, then `write_eval_log`. This is not a "local patch
+  script" under rule 4 (it doesn't change the task's dataset, scorer logic or rubric) — it
+  replaces a CLI entry point with the same package's public function. Useful for any two-phase
+  `--no-score` / score workflow (e.g. self-grading) on a task with a custom scorer.
+- **A self-grading judge can score an empty/truncated completion as near-perfect** instead of
+  penalizing it. Seen on niah: 3 samples hit `stop_reason=max_tokens` with zero completion text
+  (all budget spent on reasoning), and the self-grading judge (`model_graded_qa`) scored them
+  5, 10 and 10 on a rubric whose floor is "no answer". Don't infer judged-task quality from the
+  truncation count alone — audit the judge's score on every truncated *and* every empty-completion
+  sample specifically (`not (s.output.completion or "").strip()`), and correct/floor scores the
+  judge mishandled before reporting a headline number (`AGENTS.md` rule 3: unscored/failed
+  samples count as failures). Report both the raw and corrected numbers, and the sample ids, so
+  the discrepancy is auditable. The rubric's own floor can itself be a nonzero value on a
+  non-0/1 scale (niah's `custom_model_graded_qa_with_history_scorer` floors at "1", i.e.
+  "completely unrelated to the reference", not 0) — a judge that correctly assigns that floor to
+  an empty/truncated completion is not mis-grading, but the corrected headline number should still
+  floor it further to true 0, since a no-answer sample must contribute zero credit under rule 3.
+- **`model_graded_qa`'s parsed grade (`Score.value`) is a numeric string** ("10", "1", "7" for a
+  `grade_pattern=r"(\d+)"` rubric), not an `int`/`float`, except for a grader-parse failure
+  (`Score.unscored()`, value `NaN` as a `float`). A sample-auditing script that checks
+  `isinstance(value, (int, float))` silently misclassifies every real score as unscored (giving a
+  headline accuracy of 0.0 that looks like a real result, not an error) — cast through `float()`
+  in a `try`/`except (TypeError, ValueError)` instead, and catch the `NaN` case after casting.
+  Sanity-check any such script's headline number against a handful of samples' raw
+  completions/targets before trusting it.
+- **A task's own "accuracy" metric can be an unnormalized mean of a non-0/1 rubric.** niah's
+  `subset_accuracy_combinations()` metric sums the rubric's raw values (1/3/5/7/10) and divides by
+  sample count — "overall_accuracy" is actually a mean score out of 10, not a 0-1 fraction. Divide
+  by the rubric's max before reporting it next to other tasks' pass@1 numbers, and say so.
+- **Inspect's `vllm` provider only reads `VLLM_BASE_URL`/`VLLM_API_KEY` env vars inside the process
+  that calls `generate()` for the first time.** A two-phase script (e.g. a separate
+  `score_niah.py` run after `run_eval.sh` by the orchestrator) is a different process; the env
+  vars `run_eval.sh` exported for its own `inspect eval` subprocess do not reach it, so
+  `get_model("vllm/...")` falls through to starting a *new local* vLLM server and fails with
+  "vLLM Server requires optional dependencies" if the real `vllm` package isn't installed in that
+  venv (by design, the Inspect client venv doesn't have it — AGENTS.md section 4). Pass
+  `base_url=`/`api_key=` to `get_model()` explicitly instead of relying on inherited env.
+- **An older vLLM version can silently drop reasoning-token accounting from the usage response**
+  while still producing and parsing reasoning content correctly. On vLLM 0.24.0 (vs. 0.31.0 on the
+  same host), every sample's `output.usage.reasoning_tokens` came back `None` even though every
+  sample still had a separate `ContentReasoning` message part with real reasoning text — the
+  content pipeline and the usage-accounting field are evidently populated by different code paths
+  that didn't both exist yet in 0.24.0. Don't read a missing/`None` reasoning-token count as "no
+  thinking happened"; check the content parts (as the smoke-test checklist already requires)
+  before concluding reasoning is off, and note the reporting gap in the README's token table
+  instead of reporting a false 0.
+- **Check the actual port you intend to serve on, not just the free-GPU count, on a shared host.**
+  `serve.sh`'s default port can already be bound by a a different, unrelated job (another user's
+  interactive `vllm serve`, or your own leftover from an earlier session) even when `nvidia-smi`
+  shows enough GPUs free. vLLM then fails to bind ("Address already in use") inside the
+  orchestrator's background job, but a health check against the *wrong*, already-running server on
+  that port can still pass, and `inspect eval` then gets a confusing 404 ("model does not exist")
+  instead of a connection error. Check with `ss -ltnp | grep <port>` (or `lsof -i :<port>`) before
+  a run, and change the port if it's taken, rather than just re-trying.
+- **An `export`ed `PORT` (or similar) from debugging one task dir silently overrides a later,
+  unrelated task dir's `${PORT:-default}` fallback in the same shell session.** `serve.sh` /
+  `run_eval.sh` / `local_orchestrator.sh` read `PORT` with a default (`PORT="${PORT:-8002}"`), so
+  it only falls back to the dir's documented port when the variable is unset — not when it is set
+  to something else. An earlier `export PORT=8001` left over from testing a different dir (e.g. a
+  one-off `python score_niah.py` invocation) made a brand-new dir's smoke test launch on port 8001
+  instead of its intended 8002, invisibly, with no error (both the server and the eval client
+  inherited the same stale value, so the run was internally consistent and "worked"). It only
+  surfaced by noticing the startup log's `non-default args` line didn't match the port the script
+  was supposed to use. `unset PORT` (or any such override) before launching a different task dir
+  in a long-lived shell, and check the startup log's actual bound port against what the dir's
+  README/scripts say, not just that *a* server became healthy.
+- **A hybrid linear-attention / gated-delta-network (SSM-style) model needs far less KV cache per
+  token than a dense transformer at the same context length**, because most layers keep a
+  constant-size recurrent state instead of a per-token cache entry (check `config.json`'s
+  `layer_types`: a model with `full_attention` only every Nth layer, the rest `linear_attention`,
+  only pays full KV-cache cost for the full-attention layers). Qwen3.5-9B at `--max-model-len
+  262144` reported 1.68M KV-cache tokens on a single H100 (vLLM's own "Maximum concurrency for
+  262,144 tokens per request: 6.42x" log line) — roughly 13x more concurrent full-length requests
+  per GPU than a same-size dense model would fit at a comparable context length. Don't assume a
+  `--max-connections` value tuned for a dense model's KV budget is a ceiling for a hybrid one;
+  check the server log's "GPU KV cache size" / "Maximum concurrency" lines after the smoke test
+  and size connections from the real number, not from a different model's precedent.
+- **Some model families have no thinking mode at all, not even an "off" switch.** Rule 3's
+  "thinking is on, at the highest effort" default assumes a model that supports both modes.
+  Qwen3-Coder-Next's card states it plainly: "This model supports only non-thinking mode and does
+  not generate `<think>` blocks in its output. Meanwhile, specifying `enable_thinking=False` is no
+  longer required." For such a model, there is no `--reasoning-parser` to set on the server, no
+  `enable_thinking`/`chat_template_kwargs` to pass anywhere (generation or grading), and no
+  separate reasoning content part to check for in the smoke-test audit (confirm its absence
+  instead, on every sample, as evidence the model genuinely has no thinking mode rather than
+  evidence something is misconfigured). Check the model card before assuming every model needs a
+  reasoning parser and a thinking-enabled chat template kwarg.
 
 ## 10. Conventions established in the task directories
 

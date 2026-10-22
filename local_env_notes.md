@@ -17,13 +17,46 @@ Keep them in `local_env_notes.local.md` next to this file, which git ignores, an
 - Keep checkpoints and the HF caches (`HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`) on fast local disks. Network
   volumes (NFS, cloud block storage) can cap uncached reads near 100 MB/s, so loading a 100+ GB checkpoint takes tens
   of minutes. `serve.sh` inherits the cache variables from the shell.
+- Check `df -h` on the default HF cache mount before downloading a large checkpoint, not just the overall disk usage
+  message from a previous run. A shared `/home` can be at 98%+ full from other users' data with only tens of GB free
+  while a different local mount (e.g. `/data`, LVM/XFS, not NFS) sits almost empty; `chg status`'s `DETAILS` column
+  for another tenant's running job can reveal the convention already in use on that host (a path like
+  `/data/<user>/hub_cache/...`). Point `HF_HOME` at that mount for the one invocation that needs it
+  (`export HF_HOME=/data/$USER/hf_cache` in `local_orchestrator.sh`, scoped, not a global dotfile change) rather than
+  letting the download fail or silently fill the shared disk for every other tenant. A model's total on-disk size
+  (not just what fits in GPU memory) is the sum of its `.safetensors` blob sizes, gettable without downloading
+  anything via `https://huggingface.co/api/models/<org>/<model>?blobs=true`.
 - The HF Hub rate-limits anonymous API calls per IP address (429), and many engines starting at once can hit it and
   abort model loading. Pre-download the weights and serve with `HF_HUB_OFFLINE=1`.
 - Qwen4Exp (Qwen3.8-Flash-Next) keeps its 51B n-gram table in pinned host memory. While a server loads, every DP
   worker holds a private host copy (about 136 GB each for the BF16 table), so two DP=4 servers starting together need
   about 1.1 TB of RAM and evict the page cache. Start the servers one after the other.
-- On a shared host, check `nvidia-smi` (`amd-smi` on AMD) before claiming GPUs. Stop processes by exact PID:
-  `pgrep -f`/`pkill -f` patterns can match other users' processes or your own shell.
+- On a shared host, check how many GPUs are actually free before claiming any (`amd-smi` instead of `nvidia-smi`
+  on AMD; count idle GPUs from its process list the same way). Stop processes by exact PID: `pgrep -f`/`pkill -f`
+  patterns can match other users' processes or your own shell.
+
+  ```bash
+  echo $(( $(nvidia-smi -L | wc -l) - $(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | wc -l) ))
+  ```
+
+  (total GPUs on the box minus GPUs a compute process is currently running on). Before starting any server, multiply
+  together every parallelism degree the `vllm serve` command sets — tensor (`--tensor-parallel-size`), data
+  (`--data-parallel-size`), pipeline (`--pipeline-parallel-size`) and expert (`--enable-expert-parallel`'s implied
+  degree, or `--expert-parallel-size` where the recipe sets it) — and confirm the product does not exceed the free
+  count above. Do not silently clamp TP/DP/PP/EP down to fit; stop and tell the user, since this is an infrastructure
+  choice (AGENTS.md section 3) but oversubscribing GPUs another tenant is using will crash or starve both jobs.
+  `local_orchestrator.sh` is where this check and the GPU count belong (section 2: it is the only env-specific file).
+
+  Also check whether `chg` is installed: `chg --version`. If it is, always launch vLLM through it, pinned to exactly
+  the GPUs you just counted as free, instead of launching `vllm serve` directly:
+
+  ```bash
+  chg run --gpus <number_of_available_gpus> -- vllm serve ...
+  ```
+
+  This wrapping belongs in `local_orchestrator.sh`, not in `serve.sh` — `serve.sh` stays vLLM-specific arguments only
+  (AGENTS.md section 2). If `chg` is not installed, fall back to pinning the server to specific free GPU indices with
+  `CUDA_VISIBLE_DEVICES` (`HIP_VISIBLE_DEVICES` on AMD) instead.
 - `amd-smi` can number GPUs differently from HIP (`HIP_VISIBLE_DEVICES`). Once, with HIP devices 0 and 1 free,
   `amd-smi` showed GPUs 0 and 3 idle. Find the free HIP devices from the `HIP_VISIBLE_DEVICES` of the running servers
   (e.g. `podman inspect` on their containers), not from the `amd-smi` index.
