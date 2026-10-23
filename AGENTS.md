@@ -274,20 +274,21 @@ Python.
   choosing `--max-connections`; oversubscribing evicts prefix-cached histories and re-prefills them every turn.
 - **Inspect's vLLM context-window discovery loses a race with compaction.** The `vllm` provider learns the
   served `max_model_len` from `/v1/models` during the first `generate()`, but the ReAct agent's compaction
-  resolves its threshold (`0.9 × window`) on the first `compact_fn`, which runs before that call. Every sample
-  therefore uses Inspect's 128,000 default, and a threshold of 115,200, instead of the real window and 235,929.
-  Inspect caches that threshold for the whole run. `CompactionEdit` only clears old tool results and thinking
-  blocks; it keeps the last 3 tool-use/result pairs and all conversation text. The compacted size of a long
-  trajectory therefore rises toward the threshold, and once the remaining material cannot be reduced the sample
-  dies with `RuntimeError: Compaction insufficient`. Inspect records that as a *sample error*, so the sample
-  drops out of the scored denominator without saying so. Count it as a failure, per section 3. The problem is
-  not model-specific. It has hit deepswe-1.1 with 5 to 15 samples per model, swe-bench-pro and
+  resolves its threshold (`0.9 × window`) on the first `compact_fn`, which can run before that call. The race
+  goes both ways in practice: some samples use Inspect's 128,000 default and a threshold of 115,200, others use
+  the real window and 235,929, and Inspect caches whichever it resolved for the whole run. `CompactionEdit` only
+  clears old tool results and thinking blocks, keeping the last 3 tool-use/result pairs and all conversation
+  text, so the compacted size of a long trajectory rises toward the threshold. Once the remaining material
+  cannot be reduced, the sample dies with `RuntimeError: Compaction insufficient`. A correct window is not a
+  cure: one sample failed at 237,577 tokens against 235,929. Inspect records such a death as a *sample error*,
+  so the sample drops out of the scored denominator without saying so. Count it as a failure, per section 3. The
+  problem is not model-specific. It has hit deepswe-1.1 with 5 to 15 samples per model, swe-bench-pro and
   terminal-bench-2.1 across every family, and 12 such errors in one deepswe run tripped `--fail-on-error 0.1`
-  and forced an `inspect eval-retry`. No CLI or env override exists. Pinning the window needs
-  `set_model_info()` in Python, which is a wrapper, so only with the user's agreement. The proper fix is
-  upstream: inspect-ai should re-resolve the threshold after registration, and inspect_harbor, which hardcodes
-  `CompactionEdit()`, could expose the threshold as a task arg. The 128,000 is only the compaction trigger and
-  never a hard cap, so contexts above it still occur.
+  and forced an `inspect eval-retry`. No CLI or env override exists. Pinning the window needs `set_model_info()`
+  in Python, which is a wrapper, so only with the user's agreement. The proper fix is upstream: inspect-ai should
+  re-resolve the threshold after registration, and inspect_harbor, which hardcodes `CompactionEdit()`, could
+  expose the threshold as a task arg. The 128,000 is only the compaction trigger and never a hard cap, so
+  contexts above it still occur.
 - **vLLM 0.32 returns reasoning in the `reasoning` message field** (OpenAI style), not `reasoning_content`.
   inspect-ai 0.3.273 parses it into a separate reasoning content part; check the field name in a raw
   `/v1/chat/completions` response before concluding the reasoning parser is broken.

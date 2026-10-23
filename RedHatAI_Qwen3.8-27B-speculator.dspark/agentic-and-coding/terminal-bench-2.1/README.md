@@ -166,10 +166,8 @@ experimental, so its shape may change between releases.
 
 ## Results
 
-**These are smoke-test numbers.** The run covered 16 of the 89 tasks, the first 16 in dataset order (the
-dataset is not shuffled), with 1 epoch. That prefix is not a random sample, and 8 of the 16 are tasks the base
-Qwen3.8-27B run failed in all three of its epochs. Rerun all 89 tasks before quoting this score or these
-acceptance numbers.
+All 89 tasks, 1 epoch each, produced by two runs with identical settings: 16 tasks first, then the remaining
+73 (`logs/` holds both `.eval` files, and the analysis pools them). Every task is counted once.
 
 With model generation config:
 
@@ -179,88 +177,95 @@ the following scores and token stats are obtained:
 
 | metric | value |
 |---|---|
-| accuracy over all 16 samples (sample errors count as failures) | 0.688 (11 of 16) |
-| stderr | 0.1159 |
-| accuracy over the 15 graded samples (sample errors excluded) | 0.733 (11 of 15) |
-| time-limit hits (7200 s) | 1 (`caffe-cifar-10`, failed) |
-| turns truncated at max_tokens | 1 sample |
-| sample errors | 1 (`schemelike-metacircular-eval`, `RuntimeError: Compaction insufficient`, see Patches) |
-| agent turns per sample: median / mean / max | 42 / 79 / 298 |
-| tasks passing | kv-store-grpc, log-summary-date-ranges, model-extraction-relu-logits, openssl-selfsigned-cert, path-tracing, pypi-server, regex-chess, regex-log, torch-pipeline-parallelism, torch-tensor-parallelism, write-compressor |
-| tasks failing | caffe-cifar-10 (time limit), dna-assembly, mteb-leaderboard, qemu-alpine-ssh |
+| accuracy over all 89 samples (pass@1, sample errors count as failures) | 0.742 (66 of 89) |
+| stderr | 0.0464 |
+| accuracy over the 87 graded samples (sample errors excluded) | 0.759 (66 of 87) |
+| time-limit hits (7200 s) | 3 (`caffe-cifar-10`, `extract-moves-from-video`, `gpt2-codegolf`, all failed) |
+| samples with a turn truncated at max_tokens | 5 |
+| sample errors | 2, both `RuntimeError: Compaction insufficient` (`schemelike-metacircular-eval`, `largest-eigenval`; see Patches) |
+| agent turns per sample: median / mean / max | 32 / 73 / 551 |
 
 | tokens / sample | input | output | reasoning |
 |---|---|---|---|
-| mean | 7,300,363 | 128,303 | 97,703 |
-| median | 3,287,555 | 80,984 | 59,916 |
-| max | 37,092,102 | 464,263 | 399,566 |
+| mean | 7,326,555 | 119,103 | 90,342 |
+| median | 1,695,537 | 47,498 | 35,493 |
+| max | 92,915,144 | 766,670 | 565,343 |
 
-Input tokens are cumulative over agent turns, because the history is resent every turn. They include
+Input tokens are cumulative over agent turns, because the history is resent every turn, and they include
 cache reads.
 
-Serving did not degrade the model on this prefix. Of the 8 tasks the base run failed in all three epochs,
-this run passed 4 (`path-tracing`, `regex-chess`, `torch-pipeline-parallelism`, `write-compressor`). The one
-failure on a task the base run did pass is `caffe-cifar-10`, which hit the 7200 s limit, so it reflects the
-single-replica time budget rather than a serving fault.
+**The 0.742 is not comparable with the base run's 0.493 avg@3.** The task, scaffold and sampling match, but that
+run served 267 samples at once on 8 H100s and this one serves 9 at a time on 4, so each sample here gets far
+more generation throughput inside the same 7200 s limit. The gap is mostly that: of the 31 tasks the base run
+failed in all three of its epochs, this run passed 16 (`build-pov-ray`, `chess-best-move`, `cobol-modernization`,
+`compile-compcert`, `fix-ocaml-gc`, `mailman`, `make-mips-interpreter`, `path-tracing`, `path-tracing-reverse`,
+`query-optimize`, `regex-chess`, `torch-pipeline-parallelism`, `tune-mjcf`, `video-processing`,
+`winning-avg-corewars`, `write-compressor`). In the other direction, 15 of this run's 23 non-passes are on that
+same always-failing list, so 8 are failures on tasks the base run solved at least once. Speculative decoding
+changes what generation costs, not what the model can do, so neither number should be read as evidence about
+DSpark's effect on capability.
 
 ### Draft acceptance
 
-`analyze_spec_decode.py` over the same log: 1,267 model calls and 618,406 verify steps, all of them carrying
-`metrics.speculative_decoding` (1267 of 1267), with 0 histogram/step-count mismatches.
+`analyze_spec_decode.py` over both logs: 6,482 of 6,483 model calls carried `metrics.speculative_decoding` (one
+call did not), across 3,134,551 verify steps, with 0 histogram/step-count mismatches.
 
 | headline metric | value |
 |---|---|
-| micro MAL (1 + accepted/steps) | 3.319 |
-| mean first-token acceptance rate | 0.701 |
-| macro MAL (unweighted mean of per-call values) | 3.553 |
-| median per-call MAL | 3.347 |
-| mean conditional acceptance rate | 0.731 |
+| micro MAL (1 + accepted/steps) | 3.381 |
+| mean first-token acceptance rate | 0.708 |
+| macro MAL (unweighted mean of per-call values) | 3.539 |
+| median per-call MAL | 3.366 |
+| mean conditional acceptance rate | 0.740 |
 
-Per-call MAL: median 3.347, p05 2.581, p95 5.197. Micro MAL weights every verify step equally, so long
-responses dominate it; macro MAL weights every request equally. They differ here because call length
-correlates with acceptance (Spearman -0.234).
+Per-call MAL: median 3.366, p05 2.528, p95 5.153. Micro MAL weights every verify step equally, so long
+responses dominate it; macro MAL weights every request equally. They differ because call length correlates
+with acceptance (Spearman -0.119 over all 6,482 calls).
 
 | position | overall acceptance | conditional acceptance |
 |---|---|---|
-| 0 | 0.701 | 0.701 |
-| 1 | 0.493 | 0.703 |
-| 2 | 0.352 | 0.713 |
-| 3 | 0.255 | 0.726 |
-| 4 | 0.188 | 0.738 |
-| 5 | 0.142 | 0.752 |
-| 6 | 0.107 | 0.758 |
-| 7 | 0.082 | 0.760 |
+| 0 | 0.708 | 0.708 |
+| 1 | 0.501 | 0.708 |
+| 2 | 0.360 | 0.718 |
+| 3 | 0.262 | 0.728 |
+| 4 | 0.196 | 0.747 |
+| 5 | 0.149 | 0.763 |
+| 6 | 0.115 | 0.772 |
+| 7 | 0.089 | 0.773 |
 
 The conditional column is the per-position hazard rate, and it rises with position, so acceptance is better
-than geometric. The overall column is the model-card convention: its sum plus 1 equals micro MAL.
+than geometric: later draft tokens are accepted slightly more often than earlier ones, once their predecessor
+was. The overall column is the model-card convention, and its sum plus 1 equals micro MAL.
 
 | region | verify steps | share of steps | MAL | position-0 acceptance |
 |---|---|---|---|---|
-| thinking | 512,824 | 82.9% | 3.051 | 0.673 |
-| response | 105,582 | 17.1% | 4.624 | 0.836 |
+| thinking | 2,570,857 | 82.0% | 3.130 | 0.680 |
+| response | 563,694 | 18.0% | 4.529 | 0.838 |
 
-Draft acceptance is far higher in the response text than in the thinking text. The response region here is
-mostly tool-call JSON, which is more predictable than reasoning prose. 1,091 of 618,406 steps straddled the
-boundary and were attributed by the midpoint of their accepted tokens.
+Acceptance is much higher in the response text than in the thinking text. The response region is mostly
+tool-call JSON, which is more predictable than reasoning prose. 5,678 of 3,134,551 steps straddled the boundary
+and were attributed by the midpoint of their accepted tokens.
 
-MAL by context length rises with context: 3.036 below 4k tokens, 3.173 at 32-64k, 3.377 at 64-128k and 3.568
-above 128k. MAL shows no trend in turn number (micro 2.87 to 3.69 across bins, apart from the 16-call turn-5
-bin at 4.62). Within a response, MAL rises from 3.09 in the first decile to 3.89 in the last. Removing calls
-or samples above the p95 output length moves micro MAL from 3.319 to 3.302 and 3.294, so long outliers do not
-drive the result. Passing samples average MAL 3.423 against 3.230 for failing samples.
+MAL rises with context length: 2.987 below 4k tokens, 3.139 at 4-16k, 3.206 at 16-32k, 3.242 at 32-64k, 3.385
+at 64-128k and 3.586 above 128k. MAL shows no trend in turn number (2.91 to 3.47 across bins). Within a
+response, MAL rises from 3.21 in the first decile to 3.98 in the last. Removing calls or samples above the p95
+output length moves micro MAL from 3.381 to 3.372 and 3.327, so long outliers do not drive the result. Passing
+samples average MAL 3.399 against 3.363 for failing samples, so acceptance does not predict task success here.
 
 ## Patches for upstream
 
 None are needed for the dataset. Two tooling issues are known, both present in the sibling task dirs and
 relevant only if this POC is extended.
 
-1. **Inspect's vLLM context-window discovery loses a race with compaction.** The `vllm` provider learns the
-   served `max_model_len` from `/v1/models` during the first `generate()`, but the ReAct agent's compaction
-   resolves its threshold (0.9 x window) on the first `compact_fn`, which runs before that call. Every sample
-   therefore uses Inspect's 128,000 default, and a threshold of 115,200, instead of the served 262,144 and
-   235,929. `CompactionEdit` only clears old tool results and thinking blocks, so a long trajectory eventually
-   cannot be reduced, and the sample dies with `RuntimeError: Compaction insufficient`. Inspect records that as
-   a sample error. One sample here, `schemelike-metacircular-eval`, failed this way. No CLI or env override
+1. **Context compaction can fail, at either threshold, and the window it uses is racy.** The `vllm` provider
+   learns the served `max_model_len` from `/v1/models` during the first `generate()`, but the ReAct agent's
+   compaction resolves its threshold (0.9 x window) on the first `compact_fn`, which can run before that call.
+   Both outcomes occur in this dir: `schemelike-metacircular-eval` kept Inspect's 128,000 default and a
+   threshold of 115,200, while `largest-eigenval` discovered the served 262,144 and used 235,929. `CompactionEdit`
+   only clears old tool results and thinking blocks, keeping the last 3 tool-use pairs and all conversation
+   text, so a trajectory whose own messages exceed the threshold cannot be reduced and the sample dies with
+   `RuntimeError: Compaction insufficient`. Inspect records that as a sample error, not a failure. Both samples
+   above failed this way: 118,867 tokens against 115,200, and 237,577 against 235,929. No CLI or env override
    exists. Pinning the window needs `set_model_info()` in Python, or an upstream fix that re-resolves the
    threshold after registration. `inspect_harbor` hardcodes `CompactionEdit()` and could expose the threshold
    as a task arg.
