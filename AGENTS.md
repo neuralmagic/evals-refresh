@@ -264,6 +264,13 @@ Python.
   It is noise if it appears at the moment the eval finished.
 - **Inspect's multiple-choice parser** requires `ANSWER: <LETTER>` on the last line; a model that
   writes `ANSWER: $A` can never be parsed. Check the unparsed count.
+- **MATH-500 with Inspect's MATH task.** The 500 `HuggingFaceH4/MATH-500` problems and solutions at revision
+  `6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be` match unique problems in `DigitalLearningGmbH/MATH-lighteval`
+  test at revision `0530c78699ea5e8eb5530600900e1f328b48acad`. With inspect-evals 0.20.0, select their
+  stable IDs via `--sample-id`; `--limit 500` selects a different set, and Inspect ignores `--limit` when
+  `--sample-id` is present. Smoke-test with five selected IDs, not `--limit 5`. The stock task includes a model judge;
+  `--no-score` followed by `inspect score --scorer` can select its symbolic scorer without calling the judge.
+  Its SymPy comparison can reject correct answers it cannot parse or subtract, including some tuples.
 - **DSA/MLA models with a huge native context can OOM vLLM's post-graph warm-up on Hopper.** GLM-5.3's
   sparse-indexer JIT warm-up allocates ~24 GiB per GPU (warm-up batch × 64 heads × `max_model_len` × fp32) with
   the checkpoint's default 1M window, after CUDA graphs captured fine. Cap `--max-model-len` (262144 worked and

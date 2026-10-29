@@ -1,7 +1,7 @@
 # Eval coverage matrix
 
 Benchmarks reported by the model cards of 11 open-weight model families, mapped to Inspect packages, capability buckets and
-execution tiers. **Repo** marks the evals implemented and run in this repository (for at least one model); their protocol
+execution tiers. **Repo** marks the evals implemented in this repository (for at least one model); their protocol
 and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how many families report the benchmark.
 
 ## Benchmarks
@@ -90,7 +90,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 | 1 | DeepSearchQA | general-tool-usage | search-research | agent |  | inspect_harbor | kgmon_deepsearchqa | Kimi-K3 |
 | 1 | Harvey LAB | general-tool-usage | pro-work | agent |  | inspect_harbor | harveyai_lab | Kimi-K3 |
 | 1 | SkillsBench | general-tool-usage | tool-use | agent |  | inspect_harbor | benchflow_skillsbench | Qwen3.8 |
-| 1 | MATH-500 | knowledge-and-reasoning | math-reasoning | none |  | PARTIAL | native math is full MATH; the 500-subset is not a separate task | MiniCPM5 |
+| 1 | MATH-500 | knowledge-and-reasoning | math-reasoning | none | ✅ | inspect_evals | math with selected sample IDs (task prepared, not yet run) | MiniCPM5 |
 | 1 | OSWorld-G | general-tool-usage | computer-use | agent |  | PARTIAL | grounding subset; native osworld / harbor osworld-verified are the main set | Nex-N2.5 |
 | 1 | AA-Briefcase | general-tool-usage | pro-work | agent |  | MISSING | Artificial Analysis proprietary | Kimi-K3 |
 | 1 | AA-Omniscience | knowledge-and-reasoning | knowledge-recall | none |  | MISSING | Artificial Analysis proprietary | Nemotron-3.x |
@@ -152,7 +152,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 |---|---|---|---|---|---|
 | agentic-and-coding | 23 | 15 | 2 | 6 | 65% |
 | general-tool-usage | 45 | 12 | 2 | 31 | 26% |
-| knowledge-and-reasoning | 42 | 19 | 2 | 21 | 45% |
+| knowledge-and-reasoning | 42 | 20 | 1 | 21 | 47% |
 | long-context | 7 | 0 | 2 | 5 | 0% |
 | multimodal | 20 | 2 | 1 | 17 | 10% |
 
@@ -166,7 +166,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 
 | | total | runnable | partial | missing | % |
 |---|---|---|---|---|---|
-| none | 68 | 21 | 4 | 43 | 30% |
+| none | 68 | 22 | 3 | 43 | 32% |
 | sandbox | 8 | 5 | 0 | 3 | 62% |
 | agent | 61 | 22 | 5 | 34 | 36% |
 
@@ -180,7 +180,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 |---|---|---|---|---|
 | agentic-and-coding | - | 5/8 | 10/15 | 15/23 |
 | general-tool-usage | - | - | 12/45 | 12/45 |
-| knowledge-and-reasoning | 19/41 | - | 0/1 | 19/42 |
+| knowledge-and-reasoning | 20/41 | - | 0/1 | 20/42 |
 | long-context | 0/7 | - | - | 0/7 |
 | multimodal | 2/20 | - | - | 2/20 |
 
@@ -305,9 +305,9 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 |---|---|---|---|---|---|
 | ✗ | 1 | DSBench | agent |  |  |
 
-### KNOWLEDGE-AND-REASONING  (19/42 runnable) — knowledge, reasoning, math, factuality, instruction following
+### KNOWLEDGE-AND-REASONING  (20/42 runnable) — knowledge, reasoning, math, factuality, instruction following
 
-#### math-reasoning (5/10 runnable) — mathematical problem solving
+#### math-reasoning (6/10 runnable) — mathematical problem solving
 
 | status | # | Benchmark | Exec | Registry task / note | Repo |
 |---|---|---|---|---|---|
@@ -319,7 +319,7 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 | ✔ | 1 | GSM8K | none | gsm8k |  |
 | ✔ | 1 | MATH | none | math |  |
 | ✔ | 1 | MGSM | none | mgsm |  |
-| ~ | 1 | MATH-500 | none |  |  |
+| ✔ | 1 | MATH-500 | none | math + selected sample IDs (not yet run) | ✅ |
 | ✗ | 1 | CMath | none |  |  |
 
 #### knowledge-recall (4/9 runnable) — academic/world knowledge recall, mostly multiple-choice
