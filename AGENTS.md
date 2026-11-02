@@ -249,6 +249,12 @@ Python.
   with the individual sampling flags.
 - **`--max-tokens >= --max-model-len`** makes vLLM reject every request while Inspect reports
   success with accuracy 0.000 in seconds.
+- **Runaway generations crawl large short-answer evals.** Some models ramble on a fraction of
+  multiple-choice samples to any cap without ever emitting a parseable answer; at a 32k cap those
+  requests fill the KV cache and a 12k-sample mmlu-pro epoch crawls for hours. Legitimate answers
+  are short (Llama-3.1-8B: p95 ~900 output tokens), so cap `--max-tokens` a few times above the
+  legitimate p95 (4096 used) and report the truncated count in Results; the cap is score-neutral
+  because those samples score 0 either way.
 - **Harbor tasks build one image per task, serially, before any sample starts**, and Inspect's
   control server is invisible during that phase. A Dockerfile that copies per-task files before
   `apt-get` defeats layer sharing (LiveCodeBench: ~750 MB and ~1 min per image ×100). Pre-build in
@@ -283,6 +289,20 @@ Python.
 - **Completion watchers must not race the eval start.** A `while pgrep inspect-eval` loop started during server
   startup exits immediately (the eval process does not exist yet) and reports a false "finished". Watch the
   orchestrator script's process instead, or start the watcher after samples are in flight.
+- **Completion markers persist across driver restarts.** A queue-driver log that survives a restart still contains
+  the previous run's "ALL DONE" line, so grepping the whole file reports a false finish. Poll the driver process
+  (`kill -0 <pid>`) or read only lines newer than the restart.
+- **inspect-ai 0.3.285 log API.** `log.results.scores[*].metrics` is a dict of name → `EvalMetric` (`.name`, `.value`),
+  not a list; `log.eval.created` is an ISO-8601 string and there is no `completed_at` (use the `.eval` file's mtime for
+  run duration); and a `header_only` read of a partial (interrupted) log returns `results=None`, so guard before
+  `.total_samples` when several logs may exist.
+- **Reading big `.eval` logs takes minutes.** A full `read_eval_log` of a 30-40k-sample log costs minutes of CPU and
+  GBs of RAM; doing it for 40 logs serially exceeds any tool timeout. Compute derived per-sample stats in a
+  `multiprocessing` Pool and cache them (keyed by log path + mtime) so re-runs are instant. Use `print(..., flush=True)`
+  in such scripts: a timeout kill silently discards buffered stdout, hiding all progress and partial completion.
+- **`inspect_evals/mmlu_0_shot` dedups its dataset.** cais/mmlu ships 14,042 test rows but the task's dataset
+  processing drops 78 double-subject and 27 repeated questions, so a full epoch is 13,937 samples. Log-validation
+  totals must expect 13,937, not 14,042.
 
 ## 10. Conventions established in the task directories
 

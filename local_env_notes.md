@@ -171,3 +171,6 @@ Setup gives the commands), name and place them as you like, and point `local_orc
   Don't reuse that setup for new DeepSWE runs.
 - A `client_requirements.txt` that contains litellm next to `openai==3.14.0` installs only with
   `pip install --no-deps -r client_requirements.txt`; a resolving install fails on litellm's `openai<3` pin.
+- `inspect_evals`' `math` task has undeclared client-env deps: its sympy scorer needs `sympy` (which
+  needs `antlr4-python3-runtime`, 4.11 for sympy 1.14) or the run fails at scoring. Install both
+  explicitly next to `inspect-evals openai` (the math task dirs' README Setup and Patches document it).

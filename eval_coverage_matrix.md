@@ -74,15 +74,15 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 | 1 | BigCodeBench | agentic-and-coding | code-gen | sandbox |  | inspect_evals | bigcodebench | DeepSeek-V4 |
 | 1 | DROP | knowledge-and-reasoning | general-reasoning | none |  | inspect_evals | drop | DeepSeek-V4 |
 | 1 | DocVQA | multimodal | doc-understanding | none |  | inspect_evals | docvqa | DeepSeek-V4 |
-| 1 | GSM8K | knowledge-and-reasoning | math-reasoning | none |  | inspect_evals | gsm8k | DeepSeek-V4 |
+| 1 | GSM8K | knowledge-and-reasoning | math-reasoning | none | ✅ | inspect_evals | gsm8k | DeepSeek-V4 |
 | 1 | HealthBench | knowledge-and-reasoning | domain-professional | none |  | inspect_evals | healthbench | Qwen3.8 |
 | 1 | HellaSwag | knowledge-and-reasoning | general-reasoning | none |  | inspect_evals | hellaswag | DeepSeek-V4 |
 | 1 | HumanEval | agentic-and-coding | code-gen | sandbox |  | inspect_evals | humaneval | DeepSeek-V4 |
 | 1 | IFEval | knowledge-and-reasoning | instruction-following | none |  | inspect_evals | ifeval | MiniCPM5 |
 | 1 | LCB-Pro | agentic-and-coding | code-gen | sandbox |  | inspect_evals | livecodebench_pro | MiniCPM5 |
-| 1 | MATH | knowledge-and-reasoning | math-reasoning | none |  | inspect_evals | math | DeepSeek-V4 |
+| 1 | MATH | knowledge-and-reasoning | math-reasoning | none | ✅ | inspect_evals | math | DeepSeek-V4 |
 | 1 | MGSM | knowledge-and-reasoning | math-reasoning | none |  | inspect_evals | mgsm | DeepSeek-V4 |
-| 1 | MMLU | knowledge-and-reasoning | knowledge-recall | none |  | inspect_evals | mmlu_0_shot / mmlu_5_shot | DeepSeek-V4 |
+| 1 | MMLU | knowledge-and-reasoning | knowledge-recall | none | ✅ | inspect_evals | mmlu_0_shot / mmlu_5_shot | DeepSeek-V4 |
 | 1 | PaperBench | agentic-and-coding | research-auto | agent |  | inspect_evals | paperbench | Qwen3.8 |
 | 1 | SimpleQA-Verified | knowledge-and-reasoning | factuality | none |  | inspect_evals | simpleqa_verified | DeepSeek-V4 |
 | 1 | WinoGrande | knowledge-and-reasoning | general-reasoning | none |  | inspect_evals | winogrande | DeepSeek-V4 |
@@ -316,8 +316,8 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 | ✗ | 4 | IMOAnswerBench | none |  |  |
 | ✔ | 3 | AIME 2026 | none | aime2026 | ✅ |
 | ✗ | 2 | MathArena Apex | none |  |  |
-| ✔ | 1 | GSM8K | none | gsm8k |  |
-| ✔ | 1 | MATH | none | math |  |
+| ✔ | 1 | GSM8K | none | gsm8k | ✅ |
+| ✔ | 1 | MATH | none | math | ✅ |
 | ✔ | 1 | MGSM | none | mgsm |  |
 | ~ | 1 | MATH-500 | none |  |  |
 | ✗ | 1 | CMath | none |  |  |
@@ -330,7 +330,7 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 | ✔ | 2 | MMMLU | none | openai_mmmlu |  |
 | ✗ | 2 | MMLU-Redux | none |  |  |
 | ✔ | 1 | AGIEval | none | agie_* (9 tasks) |  |
-| ✔ | 1 | MMLU | none | mmlu_0_shot / mmlu_5_shot |  |
+| ✔ | 1 | MMLU | none | mmlu_0_shot / mmlu_5_shot | ✅ |
 | ✗ | 1 | AA-Omniscience | none |  |  |
 | ✗ | 1 | C-Eval | none |  |  |
 | ✗ | 1 | CMMLU | none |  |  |
