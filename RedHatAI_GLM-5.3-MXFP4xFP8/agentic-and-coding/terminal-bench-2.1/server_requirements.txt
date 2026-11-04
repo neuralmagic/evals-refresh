@@ -163,7 +163,7 @@ safetensors==0.8.0
 sentencepiece==0.2.2
 sentry-sdk==2.72.0
 setproctitle==1.3.8
-setuptools==80.10.2
+setuptools==84.1.0
 shellingham==1.5.4
 six==1.17.0
 sniffio==1.3.1
