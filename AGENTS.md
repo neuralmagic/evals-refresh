@@ -272,6 +272,23 @@ Python.
   8xH200 holds only ~1.19M KV tokens (a hybrid-attention model of similar size holds ~20M), so DeepSWE ran 10
   concurrent ~120k-token histories and Terminal-Bench 32. Read the "GPU KV cache size" line in serve.log before
   choosing `--max-connections`; oversubscribing evicts prefix-cached histories and re-prefills them every turn.
+- **Inspect's vLLM context-window discovery loses a race with compaction.** The `vllm` provider learns the
+  served `max_model_len` from `/v1/models` during the first `generate()`, but the ReAct agent's compaction
+  resolves its threshold (`0.9 × window`) on the first `compact_fn`, which can run before that call. The race
+  goes both ways in practice: some samples use Inspect's 128,000 default and a threshold of 115,200, others use
+  the real window and 235,929, and Inspect caches whichever it resolved for the whole run. `CompactionEdit` only
+  clears old tool results and thinking blocks, keeping the last 3 tool-use/result pairs and all conversation
+  text, so the compacted size of a long trajectory rises toward the threshold. Once the remaining material
+  cannot be reduced, the sample dies with `RuntimeError: Compaction insufficient`. A correct window is not a
+  cure: one sample failed at 237,577 tokens against 235,929. Inspect records such a death as a *sample error*,
+  so the sample drops out of the scored denominator without saying so. Count it as a failure, per section 3. The
+  problem is not model-specific. It has hit deepswe-1.1 with 5 to 15 samples per model, swe-bench-pro and
+  terminal-bench-2.1 across every family, and 12 such errors in one deepswe run tripped `--fail-on-error 0.1`
+  and forced an `inspect eval-retry`. No CLI or env override exists. Pinning the window needs `set_model_info()`
+  in Python, which is a wrapper, so only with the user's agreement. The proper fix is upstream: inspect-ai should
+  re-resolve the threshold after registration, and inspect_harbor, which hardcodes `CompactionEdit()`, could
+  expose the threshold as a task arg. The 128,000 is only the compaction trigger and never a hard cap, so
+  contexts above it still occur.
 - **vLLM 0.32 returns reasoning in the `reasoning` message field** (OpenAI style), not `reasoning_content`.
   inspect-ai 0.3.273 parses it into a separate reasoning content part; check the field name in a raw
   `/v1/chat/completions` response before concluding the reasoning parser is broken.
@@ -280,6 +297,13 @@ Python.
   unhealthy process with a zombie EngineCore. Kill servers by exact PID, confirm `nvidia-smi` shows 0 MiB before
   restarting, and never `pkill -f` a pattern that appears in your own command string (use the bracket trick:
   `pgrep -f "vllm [s]erve"`).
+- **vLLM ignores SIGTERM, and a reservation can be released while its workers still hold GPU memory.** A
+  `kill $SERVER_PID` reaches only the launcher: EngineCore and the TP workers survive and keep their memory, and
+  with `canhazgpu run` the reservation is released the moment the wrapped command exits, so the GPUs are handed
+  out again while orphaned workers still occupy them. Start the server with `setsid` so it gets its own process
+  group, tear down with `kill -9 -- -$PGID`, and block until `nvidia-smi` reports 0 MiB on *your* GPUs before
+  exiting (`CUDA_VISIBLE_DEVICES` ids only: summing all GPUs never reaches zero on a shared host because other
+  tenants hold the rest). An orchestrator that merely `kill`s and exits caused a real double-allocation race here.
 - **Completion watchers must not race the eval start.** A `while pgrep inspect-eval` loop started during server
   startup exits immediately (the eval process does not exist yet) and reports a false "finished". Watch the
   orchestrator script's process instead, or start the watcher after samples are in flight.
@@ -468,3 +492,66 @@ lesson you skip will be paid for again.
 
 The internet-access and cheating findings of section 11 show why. They were first recorded only in a few task READMEs,
 so later runs of the same tasks on another host copied an older dir and ran without the fixes.
+
+## 13. Speculative decoding benchmarks
+
+A spec-decode dir measures draft-model acceptance on a real workload. Report the score next to the acceptance
+numbers, as evidence that serving did not break the model, but the acceptance analysis is the deliverable.
+
+- Layout and naming. Use `<org>_<draft-model>/<category>/<task>/`, for example
+  `RedHatAI_Qwen3.8-27B-speculator.dspark/agentic-and-coding/terminal-bench-2.1/`. The directory is named after
+  the speculator because the speculator is the artifact under test. Copy the dir of the same target model's
+  non-spec run and change only serving and analysis, so that task, subset, scaffold, sampling, epochs and limits
+  match. Record the run in the task README, and tick the `Spec` column of `eval_coverage_matrix.md` if that
+  table has one.
+- Serving. Serve the target with its recipe flags and add the draft model with
+  `--speculative-config '{"method":"<method>","model":"<draft>","num_speculative_tokens":K}'`. Take the method
+  and K from the recipe's spec-decode section or from the speculator card, and record the URL. Methods belong to
+  the engine (`dspark`, `eagle3`, `ngram`, and others), so confirm the installed vLLM supports the one you need
+  (`vllm/config/speculative.py`) and that the draft architecture is in the model registry. The draft's TP must
+  be 1 or equal to the target's TP.
+- Per-request metrics. Start the server with `--per-request-spec-decode-metrics detailed`, available from vLLM
+  0.32.0 and marked experimental. Every chat completion then carries `metrics.speculative_decoding` with the
+  mean acceptance length, a dense `acceptance_histogram` counting how many verify steps accepted exactly j
+  draft tokens (length K+1, bonus token excluded), the step and token counts, and the
+  `per_step_accepted` and `per_step_drafted` arrays that only `detailed` emits. Only single-sequence requests
+  (`n == 1`) are populated, and Inspect always sends `n == 1`. The option is independent of
+  `--disable-log-stats`, so leave vLLM's aggregate acceptance line enabled as a cross-check. Set
+  `--served-model-name` to the speculator id, so the eval log names the deployment under test.
+- Topology and concurrency. The draft adds weights and compute, which changes the KV pool. Re-read "GPU KV cache
+  size" in serve.log and keep `concurrency * max_model_len` at or below about 1.2 times the pool (section 9). A
+  small pool also limits how many long-context trajectories you can observe, which is a common reason to run a
+  spec-decode study in the first place.
+- Client. Add `--log-model-api` to `run_eval.sh`. Without it Inspect keeps only the first few model calls per
+  model plus errors, which is not enough for acceptance analysis. With it, every raw request and response is
+  kept, and `ModelCall.response` carries the metrics block, because the OpenAI-compatible provider stores
+  `completion.model_dump()` and the non-standard top-level `metrics` field survives. Logs grow quickly, to
+  hundreds of MB for a few hundred agent turns, so keep `--log-dir` on local disk.
+- Analysis. Use the task's `analyze_spec_decode.py`. `collate` reads every `*.eval` with
+  `read_eval_log(..., resolve_attachments=True)` and writes one row per model call holding the task, epoch,
+  turn, usage and every acceptance field. `analyze` turns that CSV into `report.md`, `report.json` and slice
+  CSVs. Read `sample.events` rather than `sample.messages`, because compaction drops early turns from the
+  messages. Every metric below comes from the histogram and the counts already in the response.
+  - MAL is `1 + accepted_draft_tokens / num_spec_steps`, where the leading 1 is the always-accepted bonus
+    token. Report the pooled value over all steps (micro) as the headline, and the unweighted mean of the
+    per-call values (macro) beside it. Micro weights every verify step equally; macro weights every request
+    equally.
+  - Per-position overall acceptance is `Σ_{i>j} hist[i] / steps`, the probability that position j is accepted.
+    Draft tokens are accepted in prefix order, so this is a tail probability, and the sum over j plus 1
+    reproduces MAL. That is the model-card convention.
+  - Per-position conditional acceptance is `overall[j] / overall[j-1]`, the probability that position j is
+    accepted given that j-1 was. It is the hazard rate. Either rate follows from the other, because the overall
+    rate is the running product of the conditionals.
+  - Thinking against response needs no tokenizer and no extra endpoint. The reasoning block is a prefix of the
+    completion, and its token length is `usage.completion_tokens_details.reasoning_tokens`. Each verify step
+    emits its accepted drafts plus one bonus token, so the step spans follow from `per_step_accepted`; check
+    that the `Σ(a_i + 1)` sum equals `completion_tokens`. Report MAL and both per-position rates per
+    region. The two regions can differ substantially.
+- Report no timing or throughput metric. Tokens per second, wall time and speedup all depend on the host, the
+  concurrency and the topology, so they describe only the run that produced them. Acceptance is the result that
+  transfers to another host.
+- Comparability. Speculative decoding changes what generation costs, not the task or the sampling. Report the
+  score next to the non-spec run's score and state whether the two agree. A large drop means serving broke
+  something, so check `stop_reason`, tool-call parsing, and that reasoning is parsed into a separate content
+  part. Say that the numbers are specific to the engine version and to the draft checkpoint, and that
+  `--per-request-spec-decode-metrics` is experimental.

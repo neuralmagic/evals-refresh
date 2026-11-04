@@ -1,2 +1,4 @@
 logs/
 local_env_notes.local.md
+spec_decode_report/
+__pycache__/

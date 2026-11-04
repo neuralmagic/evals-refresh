@@ -19,6 +19,13 @@ Keep them in `local_env_notes.local.md` next to this file, which git ignores, an
   of minutes. `serve.sh` inherits the cache variables from the shell.
 - The HF Hub rate-limits anonymous API calls per IP address (429), and many engines starting at once can hit it and
   abort model loading. Pre-download the weights and serve with `HF_HUB_OFFLINE=1`.
+- **`du` on a HF model directory lies, and it can look like a broken download.** huggingface_hub 2.x with xet keeps
+  large files in a content-addressed store outside the model dir (under `<HF_HOME>/hub/blobs/xx/<hash>`) and leaves
+  each model's `blobs/<sha>` as a *symlink* into it. `du -sh models--<org>--<name>` then reports a few MB for a fully
+  downloaded 50 GB checkpoint, and a half-finished download is indistinguishable by that measure. Verify with
+  `ls -laL <snapshot>/*.safetensors`, which follows symlinks and prints real sizes, compare the shard count
+  against `model.safetensors.index.json`, and run `find <snapshot> -xtype l` to find dangling links. Do not use
+  `du`. One host deleted a cache that was in fact complete and downloaded 58 GB again.
 - Qwen4Exp (Qwen3.8-Flash-Next) keeps its 51B n-gram table in pinned host memory. While a server loads, every DP
   worker holds a private host copy (about 136 GB each for the BF16 table), so two DP=4 servers starting together need
   about 1.1 TB of RAM and evict the page cache. Start the servers one after the other.
