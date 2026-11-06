@@ -132,5 +132,5 @@ the following scores and token stats are obtained:
   `origin/*` refs; do not use them.
 - Carried over from the earlier DeepSWE dirs and consumed here: the `[[verifier.collect]]` hook (inspect_harbor
   0.7.6, meridianlabs-ai/inspect_harbor#155), the vitest worker-pool OOM fixed with `taskset` in the pinned fork
-  commit `89080fcd34` of https://github.com/eldarkurtic/deep-swe (datacurve-ai/deep-swe#100), and the verifier's
+  commit `89080fcd34` of https://github.com/neuralmagic/deep-swe (datacurve-ai/deep-swe#100), and the verifier's
   non-login shell (inspect_harbor 1.0).

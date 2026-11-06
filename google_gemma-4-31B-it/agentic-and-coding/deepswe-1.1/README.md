@@ -145,7 +145,7 @@ released, install inspect_harbor from `eldarkurtic/inspect_harbor@fix/enforce-ag
   inspect_harbor 1.0.0 (https://github.com/meridianlabs-ai/inspect_harbor/pull/174).
 
 This directory consumes the dataset fix from the fork: `assets/harbor_registry.json` pins the 113 tasks of the hub
-package to commit `89080fcd34` of https://github.com/eldarkurtic/deep-swe (branch `fix/verifier-cpu-affinity`, the
+package to commit `89080fcd34` of https://github.com/neuralmagic/deep-swe (branch `fix/verifier-cpu-affinity`, the
 content of PR #100), and `run_eval.sh` loads it with `inspect_harbor/harbor -T registry_path=... -T
 dataset_name_version=deep-swe-1-1@1.1`. It needs `inspect-harbor>=1.0` for the `PATH` fix. The results below were
 produced with inspect_harbor 0.7.6 on a local copy of the hub package with the same verifier change plus a `PATH`
