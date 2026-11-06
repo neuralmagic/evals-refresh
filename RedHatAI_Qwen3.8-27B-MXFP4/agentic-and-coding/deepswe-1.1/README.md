@@ -155,7 +155,7 @@ same 113 tasks (excluding them would also flatter the score: these are the longe
   inspect_harbor 1.0.0 (https://github.com/meridianlabs-ai/inspect_harbor/pull/174).
 
 This directory consumes the dataset fix from the fork: `assets/harbor_registry.json` pins the 113 tasks of the hub
-package to commit `89080fcd34` of https://github.com/eldarkurtic/deep-swe (branch `fix/verifier-cpu-affinity`, the
+package to commit `89080fcd34` of https://github.com/neuralmagic/deep-swe (branch `fix/verifier-cpu-affinity`, the
 content of PR #100), and `run_eval.sh` loads it with `inspect_harbor/harbor -T registry_path=... -T
 dataset_name_version=deep-swe-1-1@1.1`. The results below were produced with exactly this setup and `inspect-harbor`
 1.0.0, which carries the other two fixes. It was checked with `--solver inspect_harbor/oracle` on
