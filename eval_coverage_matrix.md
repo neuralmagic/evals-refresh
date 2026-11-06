@@ -10,7 +10,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 |---|---|---|---|---|---|---|---|---|
 | 9 | Terminal-Bench 2.1 | agentic-and-coding | swe-agent | agent | ✅ | inspect_harbor | terminal_bench_2_1 | DeepSeek-V4, GLM-5.x, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5, Qwen3.8, Step-3.5-Flash |
 | 8 | GPQA Diamond | knowledge-and-reasoning | science-reasoning | none | ✅ | inspect_evals | gpqa_diamond | DeepSeek-V4, GLM-5.x, Gemma-4, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Qwen3.8 |
-| 7 | GDPval-AA | general-tool-usage | pro-work | agent | ✅ | inspect_evals | gdpval | DeepSeek-V4, GLM-5.x, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5 |
+| 7 | GDPval-AA | general-tool-usage | pro-work | agent |  | inspect_evals | gdpval | DeepSeek-V4, GLM-5.x, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5 |
 | 7 | HLE | knowledge-and-reasoning | expert-knowledge | none |  | inspect_evals | hle | DeepSeek-V4, GLM-5.x, Gemma-4, Kimi-K3, MiniCPM5, Nemotron-3.x, Qwen3.8 |
 | 7 | LiveCodeBench | agentic-and-coding | code-gen | sandbox | ✅ | inspect_harbor | livecodebench  (+ native livecodebench_pro = different bench) | DeepSeek-V4, Gemma-4, Granite-4.2, MiniCPM5, Nemotron-3.x, Qwen3.8, Step-3.5-Flash |
 | 6 | BrowseComp | general-tool-usage | search-research | agent |  | inspect_evals | browse_comp | DeepSeek-V4, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5, Step-3.5-Flash |
@@ -234,7 +234,7 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 
 | status | # | Benchmark | Exec | Registry task / note | Repo |
 |---|---|---|---|---|---|
-| ✔ | 7 | GDPval-AA | agent | gdpval | ✅ |
+| ✔ | 7 | GDPval-AA | agent | gdpval |  |
 | ✗ | 4 | Agents' Last Exam | agent |  |  |
 | ✗ | 3 | JobBench | agent |  |  |
 | ✔ | 2 | Finance Agent | agent | vals_financeagent |  |
