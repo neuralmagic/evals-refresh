@@ -333,7 +333,7 @@ revert these departures:
   results and predate the one-epoch default of section 3; new runs use 1 epoch unless the user asks for more:
   - 3: gpqa-diamond, livecodebench, terminal-bench-2.1, bfcl.
   - 8: aime-2026 (only 30 problems).
-  - 1: mmlu-pro (12k samples), swe-bench-verified, swe-bench-pro, deepswe-1.1, gdpval-aa, tau2-bench, tau3-bench.
+  - 1: mmlu-pro (12k samples), swe-bench-verified, swe-bench-pro, deepswe-1.1, tau2-bench, tau3-bench.
   - 1 for every task of the four Qwen3.8-Flash-Next dirs (RedHatAI, Inferact and nvidia NVFP4, Qwen BF16), at the
     user's request.
 - **Two-phase generous-time rerun (Terminal-Bench 2.1, GLM-5.3-MXFP4xFP8 dirs).** At the user's request, the samples
@@ -366,7 +366,7 @@ revert these departures:
   Muse Spark support is not in a vLLM release, so `local_orchestrator.sh` runs `serve.sh` inside a podman image built
   from the vLLM branch (see `local_env_notes.md`) through `tools/vllm_server.sh`; the dirs were created on a host without the GPUs to run them and
   have no results or requirements files yet.
-- **Serving topology for multi-turn tasks.** swe-bench-*, deepswe-1.1, bfcl, gdpval-aa, tau2-bench and tau3-bench
+- **Serving topology for multi-turn tasks.** swe-bench-*, deepswe-1.1, bfcl, tau2-bench and tau3-bench
   export `TP=8 DP=1` in `local_orchestrator.sh` instead of TP=2 × DP=4. vLLM's prefix cache is per replica, and
   DP routes each turn to a random replica, so agent histories would be prefilled again on every turn. `serve.sh`
   keeps the recipe defaults; the override lives only in the orchestrator.
