@@ -216,7 +216,7 @@ uvicorn==0.54.0
 uvloop==0.22.1
 vcs-versioning==2.5.0
 virtualenv==21.14.1
-# vllm: editable install of github.com/eldarkurtic/vllm branch fix/qwen4-exp-ple-compressed-tensors at commit 77e1e136bf, the Qwen4Exp compressed-tensors PLE fix on top of nightly 50319916a3, built with VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=50319916a3c72ec1358f9e29c7c282d316d86f78; see README Setup
+# vllm: editable install of vllm-project/vllm at nightly commit 50319916a3 plus the Qwen4Exp compressed-tensors PLE fix of vllm-project/vllm#59431 (upstream commit c32513b99d, merged after that nightly), built with VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=50319916a3c72ec1358f9e29c7c282d316d86f78; see README Setup
 watchfiles==1.3.0
 websockets==17.1
 wheel==0.48.0
