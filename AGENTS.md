@@ -29,9 +29,12 @@ which git ignores; read it too if it exists.
    `assets/generate_config.json` for Gemma, which has no effort levels). Adapt as needed for
    each model family.
 4. **Task definitions come from `inspect_evals` or `inspect_harbor` unchanged.** No task wrappers
-   in this repo. If a task is broken, fix it upstream (PR from a fork under github.com/eldarkurtic) and
+   in this repo. If a task is broken, fix it upstream (PR from a fork under github.com/neuralmagic) and
    consume the fix from the fork branch (pip install from git, or a Harbor registry pin to the fork
    commit); document it under the README's "Patches for upstream" section. No local patch scripts.
+   When the fix merges upstream, point the dir at the upstream commit instead of the fork, and check that the
+   upstream commit applied to the dir's pinned base gives the source that produced the results (`git apply` the
+   upstream commit's diff onto the base checkout and compare with the fork commit).
 5. **The model card's protocol decides comparability.** Before adding a task, read what the card
    reports (subset, single-shot vs agentic, judge, epochs) and say in the README whether our number
    is comparable. `eval_coverage_matrix.md` at the repo root maps benchmarks to packages,
@@ -354,7 +357,8 @@ revert these departures:
     kept in `logs/superseded_kv_thrash/`.
   - Model loading: vLLM keeps the 51B n-gram table in pinned host memory. Start the two servers one after the
     other, and keep `VLLM_ENGINE_READY_TIMEOUT_S` raised.
-  - RedHatAI's server venv carries a vLLM fix from the `eldarkurtic/vllm` fork (see its README).
+  - RedHatAI's server venv carries the Qwen4Exp compressed-tensors PLE fix of vllm-project/vllm#59431 on top of a
+    nightly that predates its merge (see its README). vLLM 0.32.0 and later releases include the fix.
 - **Muse-Spark-Open dirs** (`RedHatAI_Muse-Spark-Open-816B-A42B-MXFP4xFP8`, 453 GB checkpoint): `serve.sh` sets
   TP=8 × DP=1 with `--enable-expert-parallel` (the recipe's single-node strategy) for every task, port 8000, 1M
   context, `muse` reasoning and tool parsers, `--language-model-only` with zero multimodal limits, the Python frontend

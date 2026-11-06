@@ -45,13 +45,14 @@ host details in their headers).
 
 ```bash
 # server: the same vLLM nightly (0.30.1rc1.dev418+g50319916a) binaries plus the Qwen4Exp compressed-tensors
-# fix from the fork branch (see Patches for upstream)
+# PLE fix of vllm-project/vllm#59431, which merged after that nightly (see Patches for upstream)
 uv venv ~/.venvs/vllm-nightly-ple-fix --python 3.12 && source ~/.venvs/vllm-nightly-ple-fix/bin/activate
 uv pip install -r server_requirements.txt --index-strategy unsafe-best-match \
   --extra-index-url https://wheels.vllm.ai/50319916a3c72ec1358f9e29c7c282d316d86f78 \
   --extra-index-url https://download.pytorch.org/whl/cu130
-git clone -b fix/qwen4-exp-ple-compressed-tensors https://github.com/eldarkurtic/vllm.git && cd vllm
-git checkout 77e1e136bf884d7e126af5a7561c7ce39f37cd7c   # the fix commit that produced the results; the branch has since merged newer main
+git clone https://github.com/vllm-project/vllm.git && cd vllm
+git checkout 50319916a3c72ec1358f9e29c7c282d316d86f78   # the nightly commit the binaries come from
+git show c32513b99d29b3c6efee38df752a696bc2696c2f | git apply   # vllm-project/vllm#59431; applies cleanly and gives the source tree that produced the results
 uv pip install "cmake>=3.26.1" ninja "setuptools>=77.0.3,<81" "setuptools-scm>=8.0" "setuptools-rust>=1.9.0" wheel jinja2
 VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=50319916a3c72ec1358f9e29c7c282d316d86f78 \
   uv pip install --no-deps --no-build-isolation -e .
@@ -177,11 +178,10 @@ subordinate UIDs. They were loaded with those owners remapped to root, with laye
 vLLM (nightly and `main` as of 2026-09-30) cannot load this checkpoint:
 `Qwen4ExpPLEEmbeddingMethod.from_quant_config` raises `NotImplementedError: Qwen4Exp PLE embedding does not support
 quantization config CompressedTensorsConfig` for any compressed-tensors checkpoint, even when no config group
-targets the n-gram table. The fix (the table is loaded unquantized unless a compressed-tensors config group targets
-it) is branch
-[`fix/qwen4-exp-ple-compressed-tensors`](https://github.com/eldarkurtic/vllm/tree/fix/qwen4-exp-ple-compressed-tensors)
-of https://github.com/eldarkurtic/vllm, based on the nightly commit `50319916a3` (fix commit `77e1e136bf`); the
-server venv installs it editable on top of that nightly's precompiled binaries (see Setup). Fixed upstream since:
-[vllm-project/vllm#59431](https://github.com/vllm-project/vllm/pull/59431) (merged 2026-09-30, after the nightly
-used here) makes the same change; nightlies that include it should load this checkpoint without the fork (not
-verified here).
+targets the n-gram table.
+The fix (the table is loaded unquantized unless a compressed-tensors config group targets it) is
+[vllm-project/vllm#59431](https://github.com/vllm-project/vllm/pull/59431), merged upstream on 2026-09-30 as commit
+`c32513b99d`, after the nightly used here. The results were produced with that same 8-line change applied on top of
+nightly `50319916a3`, installed editable on the nightly's precompiled binaries. Setup reproduces that source tree by
+applying the upstream commit to the nightly checkout. vLLM 0.32.0 and later releases include the fix (v0.31.0 was cut
+before the merge and does not). Newer builds were not verified against this checkpoint here.
