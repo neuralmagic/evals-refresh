@@ -387,7 +387,7 @@ revert these departures:
 - **Each dir pins its own client packages.**
   - inspect_harbor: 0.7.5, 0.7.6, 1.0.0, or a git commit (tau3-bench; the Flash-Next swe-bench-pro and
     deepswe-1.1 dirs).
-  - bfcl and the older swe-bench-verified dirs install inspect_evals from `eldarkurtic/inspect_evals` fork branches.
+  - bfcl and the older swe-bench-verified dirs install inspect_evals from `neuralmagic/inspect_evals` fork branches.
 
   Before a run, create the client environment from the dir's `client_requirements.txt` and README Setup, or check
   that an environment you already have matches it.
