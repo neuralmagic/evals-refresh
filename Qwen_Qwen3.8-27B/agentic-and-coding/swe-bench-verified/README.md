@@ -48,7 +48,7 @@ pip install -r server_requirements.txt          # or: pip install vllm==0.29.0
 python3.12 -m venv ~/.venvs/inspect && source ~/.venvs/inspect/bin/activate
 pip install -r client_requirements.txt          # what produced the results; or the current setup, inspect_evals with the
 # swebench cap straight from the fork branch (see Patches):
-# pip install "inspect-evals[swe_bench] @ git+https://github.com/eldarkurtic/inspect_evals@fix/swe-bench-cap-swebench-below-5" openai
+# pip install "inspect-evals[swe_bench] @ git+https://github.com/neuralmagic/inspect_evals@fix/swe-bench-cap-swebench-below-5" openai
 ```
 
 Model weights and datasets are fetched from the Hugging Face Hub on first use into the usual cache (`HF_HOME`
@@ -127,6 +127,6 @@ upstream as [UKGovernmentBEIS/inspect_evals#2632](https://github.com/UKGovernmen
 `swebench.harness.test_spec`, which swebench 5.0 removed, so a fresh install resolves 5.x and every sample errors at
 scoring time (swebench 4.1.0 works). Reported as https://github.com/UKGovernmentBEIS/inspect_evals/issues/2545; the
 fix caps the `swe_bench` extra at `swebench<5` on branch `fix/swe-bench-cap-swebench-below-5` of
-https://github.com/eldarkurtic/inspect_evals, which the client venv installs from (see Setup; it resolves swebench
+https://github.com/neuralmagic/inspect_evals, which the client venv installs from (see Setup; it resolves swebench
 4.1.0). The results below were produced with inspect_evals 0.20.0 and swebench pinned by hand to 4.1.0, the same
 scorer code. Once the fix is released, install the release instead.

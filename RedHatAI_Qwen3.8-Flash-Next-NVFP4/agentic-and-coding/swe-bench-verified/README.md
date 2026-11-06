@@ -131,7 +131,7 @@ grading resets test files to the base commit and is unaffected. Reported upstrea
 `DEFAULT_IMAGE_TEMPLATE` to the official images, or ask Epoch AI to rebuild theirs with the current harness. (2)
 `inspect_evals` declares `swebench>=3.0.15` but its scorer needs swebench < 5
 (https://github.com/UKGovernmentBEIS/inspect_evals/issues/2545); fixed on branch
-`fix/swe-bench-cap-swebench-below-5` of https://github.com/eldarkurtic/inspect_evals; the client venv pins swebench
+`fix/swe-bench-cap-swebench-below-5` of https://github.com/neuralmagic/inspect_evals; the client venv pins swebench
 4.1.0 (same scorer code). Host-side: the 34 matplotlib images contain files owned by UIDs beyond rootless Docker's
 65,536 subordinate UIDs; they were loaded with those owners remapped to root, with layers rewritten from the
 registry (the processes in the sandbox run as root).

@@ -59,7 +59,7 @@ podman pull docker.io/vllm/vllm-openai-rocm:v0.31.0@sha256:749f6f3f944f12af49966
 uv venv --python 3.12 --seed ~/.venvs/inspect-swe && source ~/.venvs/inspect-swe/bin/activate
 pip install -r client_requirements.txt          # what produced the results; or inspect_evals with the swebench
 # cap straight from the fork branch (see Patches):
-# pip install "inspect-evals[swe_bench] @ git+https://github.com/eldarkurtic/inspect_evals@fix/swe-bench-cap-swebench-below-5" openai
+# pip install "inspect-evals[swe_bench] @ git+https://github.com/neuralmagic/inspect_evals@fix/swe-bench-cap-swebench-below-5" openai
 # weights: into the HF hub cache that local_orchestrator.sh mounts into the container (HF_HUB_CACHE, default ~/hf_hub_cache)
 HF_HUB_CACHE=~/hf_hub_cache hf download amd/Qwen3.8-27B-Quark-AWQ-MXFP4 --revision 5233554c5fa56afda40150556b95573c2d7d29c0
 ```
@@ -122,6 +122,6 @@ Per repository (resolved / instances): django 174/231, sympy 54/75, sphinx 25/44
 `swebench.harness.test_spec`, which swebench 5.0 removed, so a fresh install resolves 5.x and every sample errors at
 scoring time (swebench 4.1.0 works). Reported as https://github.com/UKGovernmentBEIS/inspect_evals/issues/2545; the
 fix caps the `swe_bench` extra at `swebench<5` on branch `fix/swe-bench-cap-swebench-below-5` of
-https://github.com/eldarkurtic/inspect_evals, which gives the same environment (swebench 4.1.0). The results below were produced with the base model's
+https://github.com/neuralmagic/inspect_evals, which gives the same environment (swebench 4.1.0). The results below were produced with the base model's
 client environment (`client_requirements.txt`: inspect_evals 0.20.0, swebench pinned to 4.1.0), the same scorer code.
 Once the fix is released, install the release instead.

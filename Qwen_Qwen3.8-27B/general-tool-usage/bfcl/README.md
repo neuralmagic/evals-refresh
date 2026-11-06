@@ -45,7 +45,7 @@ pip install -r server_requirements.txt          # or: pip install vllm==0.29.0
 python3.12 -m venv ~/.venvs/inspect && source ~/.venvs/inspect/bin/activate
 pip install -r client_requirements.txt          # what produced the results (inspect_evals 0.20.0); or the current setup, the
 # scorer fix straight from the fork branch (see Patches):
-# pip install "inspect-evals[bfcl] @ git+https://github.com/eldarkurtic/inspect_evals@fix/bfcl-multi-turn-scorer-short-trajectories" openai
+# pip install "inspect-evals[bfcl] @ git+https://github.com/neuralmagic/inspect_evals@fix/bfcl-multi-turn-scorer-short-trajectories" openai
 ```
 
 Model weights and datasets are fetched from the Hugging Face Hub on first use into the usual cache (`HF_HOME`
@@ -109,7 +109,7 @@ time-limit hits and no errors; their first-pass accuracy was 0.423 against 0.431
 instead of scoring 0 when a multi-turn sample ends (time or message limit) with fewer turns than the ground truth
 has, so such samples become sample errors excluded from accuracy. Reported as
 https://github.com/UKGovernmentBEIS/inspect_evals/issues/2544; the fix (missing turns count as empty, task version
-8-B) is branch `fix/bfcl-multi-turn-scorer-short-trajectories` of https://github.com/eldarkurtic/inspect_evals,
+8-B) is branch `fix/bfcl-multi-turn-scorer-short-trajectories` of https://github.com/neuralmagic/inspect_evals,
 which the client venv installs from (see Setup). The results below were produced with inspect_evals 0.20.0; the
 first pass hit the defect on 51 samples and the affected categories were rerun at a longer time limit, after which
 no sample ends early, so the fix does not change the reported numbers.
