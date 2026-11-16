@@ -29,9 +29,10 @@ which git ignores; read it too if it exists.
    `assets/generate_config.json` for Gemma, which has no effort levels). Adapt as needed for
    each model family.
 4. **Task definitions come from `inspect_evals` or `inspect_harbor` unchanged.** No task wrappers
-   in this repo. If a task is broken, fix it upstream (PR from a fork under github.com/eldarkurtic) and
-   consume the fix from the fork branch (pip install from git, or a Harbor registry pin to the fork
-   commit); document it under the README's "Patches for upstream" section. No local patch scripts.
+   in this repo. If a task is broken, fix it upstream (PR from `eldarkurtic` for the existing fixes, or
+   `neuralmagic` for the LiveCodeBench v6 task) and consume the fix from the fork branch (pip install
+   from git, an editable local checkout before push, or a Harbor registry pin to the fork commit);
+   document it under the README's "Patches for upstream" section. No local patch scripts.
 5. **The model card's protocol decides comparability.** Before adding a task, read what the card
    reports (subset, single-shot vs agentic, judge, epochs) and say in the README whether our number
    is comparable. `eval_coverage_matrix.md` at the repo root maps benchmarks to packages,
@@ -123,6 +124,10 @@ them as you like, and point `local_orchestrator.sh` at them; it is the only file
 
 These installs are the starting point for a new task. To reproduce a dir's results, create the environments from its
 `server_requirements.txt` and `client_requirements.txt` instead, as its README Setup shows.
+
+All `inspect_evals` tasks for one model share a single client environment. Do not create a second Inspect
+environment just for one `inspect_evals` task; the `inspect_harbor` client stays separate because its
+`litellm`/`openai` pins conflict.
 
 `inspect-harbor` depends on `litellm`, which pins `openai<3`, while Inspect's OpenAI-compatible
 providers need `openai>=3`; installing `openai==3.14.0` last overrides the pin and the resulting
@@ -220,7 +225,9 @@ Python.
 
 1. Find it in `eval_coverage_matrix.md`. `inspect_evals` tasks run in the `inspect_evals` client environment;
    `inspect_harbor` tasks (`Where` = `inspect_harbor`) need the `inspect_harbor` one (section 4) and Docker.
-   `PARTIAL` / `MISSING` rows are not the benchmark the cards report; say so if asked.
+   `PARTIAL` / `MISSING` rows are not the benchmark the cards report; say so if asked. If the matrix lists the
+   benchmark but not the protocol the card reports (LiveCodeBench single-shot v6 vs the Harbor agentic sample),
+   implement the missing protocol in a fork and say in the README why it differs.
 2. Read the task's README in the package and its task signature (`inspect list tasks`, or import
    it). Identify: dataset and pinned revision, gating (HF token / terms), subset flags,
    sandbox, judge model, default metrics, and whether the protocol matches the model cards.
@@ -283,6 +290,30 @@ Python.
 - **Completion watchers must not race the eval start.** A `while pgrep inspect-eval` loop started during server
   startup exits immediately (the eval process does not exist yet) and reports a false "finished". Watch the
   orchestrator script's process instead, or start the watcher after samples are in flight.
+- **`datasets` 4.8.5 and later reject loading scripts.** `load_dataset(..., trust_remote_code=True)` fails for
+  `livecodebench/code_generation_lite` with "Dataset scripts are no longer supported". Load the pinned JSONL shards
+  with `hf_hub_download(..., repo_type="dataset", revision=<commit>)` and parse them directly.
+- **Inspect serializes the task and scorer into the log header.** Passing a large dict of dataset rows or tests as a
+  scorer argument or capturing it in the scorer closure wrote an 18 GB header for a 1,055-sample task. Pass only
+  scalars to the scorer and load the data through a module-level `lru_cache` function.
+- **Inspect sandbox exec truncates large stdout.** Returning raw candidate output from the sandbox can exceed the
+  exec output limit and become invalid JSON, turning correct samples into scorer errors. Compare expected outputs
+  inside the sandbox runner and return only a small pass/fail verdict.
+- **A re-quantized checkpoint can replace a model in place under the same name.** Old `.eval` logs then describe
+  different weights. Before rerunning, move them out of `logs/` (e.g. `logs/superseded_pre_requant/`) and keep the
+  results parser's glob non-recursive; otherwise it can silently fall back to the old checkpoint's score. The 26B
+  AWQ variants went from a 2.5-5.6% GPQA score with mostly empty answers to 77-78% after re-quantization.
+- **A harness timeout can kill `local_orchestrator.sh` while its `vllm serve` child survives as an orphan.** The
+  server then holds GPU memory and answers `/health`, but no eval ever starts because the parent that waits for it is
+  gone. Launch long runs detached in a new session and verify the *orchestrator* PID is alive (the PID printed for a
+  `setsid` wrapper is not it; check with `ps -o pid,ppid,sid,cmd` and `/proc/<pid>/cwd`). Before restarting, kill the
+  orphan by exact PID and confirm the GPU is back to 0 MiB.
+- **Verify the vLLM source pin before writing it into a README.** `pip show vllm` plus
+  `git -C <checkout> rev-parse HEAD` and `git remote -v` give the truth; an older README line may name a different
+  fork/branch than the installed tree. An editable install appears in `pip freeze` as
+  `-e git+<url>@<sha>#egg=vllm`, and that SHA can be fetchable from the remote even when the branch ref is not listed
+  (`git ls-remote origin refs/heads/<branch>` empty). Record the actual HEAD and say whether the upstream PR head is
+  the identical tree.
 
 ## 10. Conventions established in the task directories
 
@@ -298,6 +329,7 @@ revert these departures:
   - 3: gpqa-diamond, livecodebench, terminal-bench-2.1, bfcl.
   - 8: aime-2026 (only 30 problems).
   - 1: mmlu-pro (12k samples), swe-bench-verified, swe-bench-pro, deepswe-1.1, gdpval-aa, tau2-bench, tau3-bench.
+  - 1 for every task of `google_gemma-4-26B-A4B-it` (new dirs).
   - 1 for every task of the four Qwen3.8-Flash-Next dirs (RedHatAI, Inferact and nvidia NVFP4, Qwen BF16), at the
     user's request.
 - **Two-phase generous-time rerun (Terminal-Bench 2.1, GLM-5.3-MXFP4xFP8 dirs).** At the user's request, the samples
@@ -335,12 +367,22 @@ revert these departures:
   - `assets/tool_chat_template_gemma4.jinja`, the recipe's template, used by `serve.sh`.
   - `assets/generate_config.json`, which turns thinking on per request.
 
-  Qwen dirs need neither, because `--reasoning-effort xhigh` does the job. The Gemma recipe URL is
-  `https://recipes.vllm.ai/Google/gemma-4-31B-it`: capital `G`, although the HF org is `google`.
+  Qwen dirs need neither, because `--reasoning-effort xhigh` does the job. The Gemma recipe URLs are
+  `https://recipes.vllm.ai/Google/gemma-4-31B-it` and `https://recipes.vllm.ai/Google/gemma-4-26B-A4B-it`:
+  capital `G`, although the HF org is `google`. The 26B dirs use the same template file.
 - **Each dir pins its own client packages.**
   - inspect_harbor: 0.7.5, 0.7.6, 1.0.0, or a git commit (tau3-bench; the Flash-Next swe-bench-pro and
     deepswe-1.1 dirs).
   - bfcl and the older swe-bench-verified dirs install inspect_evals from `eldarkurtic/inspect_evals` fork branches.
+  - The `google_gemma-4-26B-A4B-it` dirs share one client environment and install `inspect_evals` editable
+    from a local `neuralmagic/inspect_evals` checkout on branch `livecodebench-v6`. That branch also carries
+    the full LiveCodeBench v6 task (`inspect_evals/livecodebench`). It is not pushed yet, so there is no commit
+    pin; the MMLU-Pro and GPQA-Diamond dirs therefore run the fork's current `mmlu_pro` and `gpqa_diamond`
+    code, not the 0.20.0 that produced the Gemma-4-31B-it numbers. Once pushed, pin the commit in
+    `client_requirements.txt`. Upstream `inspect_evals` no longer accepts new implementations under `src/`,
+    so the task stays in the fork until it moves to a registered external package. The concrete environment
+    path lives in each `local_orchestrator.sh`; do not create a second `inspect_evals` client environment for
+    these dirs.
 
   Before a run, create the client environment from the dir's `client_requirements.txt` and README Setup, or check
   that an environment you already have matches it.
@@ -395,8 +437,11 @@ and `amd_Qwen3.8-27B-Quark-AWQ-MXFP4` copies of these tasks ran before the fixes
     exclude `solution/` from the public mirror (issue drafted for harbor-framework/terminal-bench-2-1). Protocol
     chosen with the user for that run: rerun the leaked sample and every time-limit failure once at a higher
     `--time-limit` via `--sample-id`, audit the rerun, and count any repeat leak as a failure.
-- **livecodebench.** The tasks set no network policy, so the agent has internet (the fork changes nothing). Audit
-  for lookups of the problem's published solutions.
+- **livecodebench (Harbor 100-task sample).** The tasks set no network policy, so the agent has internet (the fork
+  changes nothing). Audit for lookups of the problem's published solutions.
+- **LiveCodeBench v6 single-shot (`inspect_evals/livecodebench`).** No agent tools and no network; candidate code
+  runs in a no-network Docker sandbox. There is no tool-call leak audit. Contamination is inherent because the
+  problem set is public.
 - **Any new task with tools.** Check each `task.toml` network policy against what the runner enforces (after a run,
   Harbor's task files are cached under `~/.cache/harbor/tasks/packages/` and `~/.cache/inspect_harbor/tasks/git/`;
   tasks loaded from a registry pin can be read from the pinned commit with a shallow fetch). Check the

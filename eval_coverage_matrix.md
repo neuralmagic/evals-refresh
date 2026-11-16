@@ -12,7 +12,7 @@ and results are in `<org>_<model>/<category>/<task>/README.md`. Sorted by how ma
 | 8 | GPQA Diamond | knowledge-and-reasoning | science-reasoning | none | ✅ | inspect_evals | gpqa_diamond | DeepSeek-V4, GLM-5.x, Gemma-4, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Qwen3.8 |
 | 7 | GDPval-AA | general-tool-usage | pro-work | agent | ✅ | inspect_evals | gdpval | DeepSeek-V4, GLM-5.x, Granite-4.2, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5 |
 | 7 | HLE | knowledge-and-reasoning | expert-knowledge | none |  | inspect_evals | hle | DeepSeek-V4, GLM-5.x, Gemma-4, Kimi-K3, MiniCPM5, Nemotron-3.x, Qwen3.8 |
-| 7 | LiveCodeBench | agentic-and-coding | code-gen | sandbox | ✅ | inspect_harbor | livecodebench  (+ native livecodebench_pro = different bench) | DeepSeek-V4, Gemma-4, Granite-4.2, MiniCPM5, Nemotron-3.x, Qwen3.8, Step-3.5-Flash |
+| 7 | LiveCodeBench | agentic-and-coding | code-gen | sandbox | ✅ | inspect_harbor | livecodebench (Harbor 100-task agentic sample); full release_v6 single-shot = inspect_evals/livecodebench in the neuralmagic fork | DeepSeek-V4, Gemma-4, Granite-4.2, MiniCPM5, Nemotron-3.x, Qwen3.8, Step-3.5-Flash |
 | 6 | BrowseComp | general-tool-usage | search-research | agent |  | inspect_evals | browse_comp | DeepSeek-V4, Kimi-K3, MiniCPM5, Nemotron-3.x, Nex-N2.5, Step-3.5-Flash |
 | 6 | SWE-bench Verified | agentic-and-coding | swe-agent | agent | ✅ | inspect_evals | swe_bench | DeepSeek-V4, Granite-4.2, MiniCPM5, Mistral-M3.5, Nemotron-3.x, Step-3.5-Flash |
 | 6 | SWE-bench Pro | agentic-and-coding | swe-agent | agent | ✅ | inspect_harbor | scale_ai_swe_bench_pro / cais_swebenchpro | DeepSeek-V4, GLM-5.x, Granite-4.2, MiniCPM5, Nex-N2.5, Qwen3.8 |
@@ -212,7 +212,7 @@ Status: ✔ runnable, ~ partial (substitute only), ✗ missing. `#` = families r
 
 | status | # | Benchmark | Exec | Registry task / note | Repo |
 |---|---|---|---|---|---|
-| ✔ | 7 | LiveCodeBench | sandbox | livecodebench  (+ native livecodebench_pro = different bench) | ✅ |
+| ✔ | 7 | LiveCodeBench | sandbox | livecodebench (Harbor 100-task agentic sample); full release_v6 single-shot = inspect_evals/livecodebench in the neuralmagic fork | ✅ |
 | ✗ | 2 | Codeforces | sandbox |  |  |
 | ✔ | 1 | BigCodeBench | sandbox | bigcodebench |  |
 | ✔ | 1 | HumanEval | sandbox | humaneval |  |
