@@ -73,10 +73,7 @@ which git ignores; read it too if it exists.
 ## 3. Rules of engagement
 
 - **Never `git commit` or `git push`.** Leave changes in the working tree and say what changed.
-  Committing is the repo owner's job. One exception: the `redhatai-eval-refresh` skill
-  (`.opencode/skills/redhatai-eval-refresh/`) commits its own outputs — the refreshed queue file
-  and the new task directories — directly to main and pushes, because its workflow keeps shared
-  state on main; see its SKILL.md.
+  Committing is the repo owner's job.
 - **Pull before you start, and read what came in.** Several hosts push to this repo. Fixes and conventions found on
   one host (e.g. the leak fixes of section 11) reach you only through a pull, so before copying a task dir, check
   the newest copies of that task under every model. If a pull brings a task dir that you also have locally, the two
