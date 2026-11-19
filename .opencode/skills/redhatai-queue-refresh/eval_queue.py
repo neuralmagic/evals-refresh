@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
-"""Queue tooling for the redhatai-eval-refresh skill.
+"""Queue tooling for the redhatai-queue-refresh and redhatai-queue-eval skills.
 
 The queue is the private HF collection "<org>/Eval Queue". This script implements
-everything the skill needs to maintain it:
+everything both skills need:
 
-  queue.py count <model_id> [--debug]      Count the evaluations on one model card.
-  queue.py scan [--author RedHatAI] [--out scan.json]
-                                          Re-derive the queue: every quantized chat model in
-                                          the org whose card carries <= MAX_EVALS evaluations.
-  queue.py collection list                 Print the collection's items (needs HF_TOKEN).
-  queue.py collection sync <scan.json> [--apply]
-                                          Add queued models to / remove stale models from the
-                                          collection. Dry run unless --apply (needs HF_TOKEN).
-  queue.py collection add <model_id> [--note ...]
-  queue.py collection remove <model_id>
+  eval_queue.py count <model_id> [--debug]   Count the evaluations on one model card.
+  eval_queue.py scan [--author RedHatAI] [--out scan.json] [--full]
+                                            Re-derive the queue: every quantized chat model
+                                            in the org whose card carries <= MAX_EVALS
+                                            evaluations. Incremental by default: the last
+                                            refresh date is read from the collection's
+                                            description ("Last refresh: YYYY-MM-DD") and only
+                                            models created since then (createdAt) or changed
+                                            since then (lastModified) are examined; existing
+                                            members whose repos did not change are kept
+                                            without re-fetching. --full examines everything
+                                            (first run, after changing the counting rules,
+                                            or when drift is suspected).
+  eval_queue.py collection list              Print the collection's items (needs HF_TOKEN).
+  eval_queue.py collection sync <scan.json> [--apply]
+                                            Add queued models to / remove stale models from
+                                            the collection, then stamp the scan's date into
+                                            the collection description as the new "Last
+                                            refresh" marker. Incremental scans only remove
+                                            the members they re-checked and found stale;
+                                            full scans make the collection exactly the scan
+                                            queue. Dry run unless --apply (needs HF_TOKEN).
+  eval_queue.py collection add <model_id> [--note ...]
+  eval_queue.py collection remove <model_id>
+
+The date is stamped only by an applied sync, so a scan that is never applied does not
+advance the watermark. The incremental comparison uses a one-day lookback (the date is
+local, HF timestamps are UTC); over-inclusion is harmless, a missed model is not.
 
 Counting rules (the "evaluations attached to a card" number):
 
@@ -48,9 +66,10 @@ Validate a changed counter against known cards before trusting it:
   RedHatAI/gemma-4-31B-it-NVFP4 = 12    RedHatAI/Meta-Llama-3-8B-Instruct-FP8-KV = 1
   RedHatAI/gpt-oss-20b = 0
 
-Environment: HF_TOKEN with write access to the org (collection commands only; the collection
-is private so reading it needs the token too). HF_SCAN_CACHE=1 enables a dev-only HTTP cache
-under /tmp (never use it for a real refresh — cached cards go stale).
+Environment: HF_TOKEN with write access to the org (collection commands, and the scan's
+incremental mode — the collection is private, so even reading it needs the token; without
+one the scan falls back to a full pass). HF_SCAN_CACHE=1 enables a dev-only HTTP cache under
+/tmp (never use it for a real refresh — cached cards go stale).
 """
 
 import concurrent.futures
@@ -65,17 +84,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from datetime import datetime, timedelta
 
 HF = "https://huggingface.co"
 ORG = "RedHatAI"
 COLLECTION_TITLE = "Eval Queue"
-COLLECTION_DESCRIPTION = (
-    "Quantized models with <=3 evaluations on their model cards. Queue for the "
-    "evals-refresh skill; a model leaves once its card carries more."
+# The Hub caps collection descriptions at 150 chars; collection_description() must stay below.
+COLLECTION_DESCRIPTION_BASE = (
+    "Internal use only: RedHatAI quantized models with <=3 card evals; queue for the evals-refresh skills."
 )
+LAST_REFRESH_RE = re.compile(r"Last refresh:\s*(\d{4}-\d{2}-\d{2})")
 MAX_EVALS = 3
 WORKERS = 8
 CACHE_DIR = os.path.join("/tmp/opencode", "hf_scan_cache")
+
+
+def collection_description(date_str):
+    return "%s Last refresh: %s." % (COLLECTION_DESCRIPTION_BASE, date_str)
 
 # ---------------------------------------------------------------------------
 # HTTP
@@ -87,7 +112,8 @@ def _cache_path(url):
 
 def http(url, token=None, data=None, method=None):
     """GET/POST/DELETE; returns (status, body_text, headers). Raises after final failure."""
-    cacheable = data is None and (not url.split("/api/models")[-1].startswith("?") if "/api/models" in url else True)
+    cacheable = (data is None and "/api/collections" not in url
+                 and (not url.split("/api/models")[-1].startswith("?") if "/api/models" in url else True))
     use_cache = cacheable and os.environ.get("HF_SCAN_CACHE") == "1"
     if use_cache and method in (None, "GET") and os.path.exists(_cache_path(url)):
         with open(_cache_path(url)) as f:
@@ -343,6 +369,23 @@ def list_models(author):
     return out
 
 
+def list_models_last_modified(author):
+    """{repo_id: lastModified} for the org. A separate call because expand[] drops the
+    default fields (tags) the candidate filter needs — the §1 pitfall, used on purpose."""
+    url = HF + "/api/models?author=%s&limit=1000&expand[]=lastModified" % urllib.parse.quote(author)
+    out = {}
+    while url:
+        status, text, headers = http(url)
+        if status != 200:
+            raise RuntimeError("model list (lastModified) -> %d" % status)
+        for m in json.loads(text):
+            out[m.get("id")] = m.get("lastModified") or ""
+        link = headers.get("Link") or headers.get("link") or ""
+        m = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        url = m.group(1) if m else None
+    return out
+
+
 def is_candidate(m):
     """List-stage filter; returns (keep, reason)."""
     mid = m.get("id", "")
@@ -487,36 +530,103 @@ def evaluate_candidate(result):
 def cmd_scan(args):
     author = args.get("author") or ORG
     out_path = args.get("out") or "scan.json"
+    date_str = time.strftime("%Y-%m-%d")
+
+    # Incremental watermark: the last applied refresh, from the collection's description.
+    since, coll_slug = None, None
+    tok = token()
+    if tok and not args.get("full"):
+        try:
+            coll_slug, desc = find_collection(tok)
+            m = LAST_REFRESH_RE.search(desc or "")
+            if m:
+                since = m.group(1)
+        except Exception as e:
+            print("warning: could not read the collection (%s) — running a full scan" % e)
+    mode = "incremental" if since else "full"
+    if mode == "full":
+        print("full scan%s" % (" (--full)" if args.get("full") else " (no last-refresh date in the collection description)"))
+    else:
+        print("incremental scan since %s (from the collection description)" % since)
+
     models = list_models(author)
+    member_ids, items = set(), []
+    if mode == "incremental":
+        # One extra day of lookback: the watermark date is local, HF timestamps are UTC.
+        lookback = (datetime.strptime(since, "%Y-%m-%d") - timedelta(days=1)).date().isoformat()
+        lm = list_models_last_modified(author)
+        if coll_slug:
+            _, items = collection_items(coll_slug, tok)
+            member_ids = {item_repo_id(it) for it in items}
+
+        def dirty(m):
+            created = (m.get("createdAt") or "")[:10]
+            if not created or created >= lookback:
+                return True
+            modified = lm.get(m.get("id"))
+            return modified is None or not modified or modified[:10] >= lookback
+
+        pool = [m for m in models if dirty(m)]
+        # Members whose repos did not change cannot have gained evals: keep, don't re-fetch.
+        # (A deleted-but-unchanged member lingers until a --full; deletions are rare.)
+        dirty_members = sorted(
+            mid for mid in member_ids
+            if lm.get(mid) is None or not lm.get(mid) or lm.get(mid)[:10] >= lookback
+        )
+        print("org models: %d; changed/created since %s: %d (of which %d are collection members)"
+              % (len(models), lookback, len(pool), len(dirty_members)))
+    else:
+        pool = models
+
     funnel, candidates = Counter(), []
-    for m in models:
+    for m in pool:
+        if mode == "incremental" and m.get("id") in member_ids:
+            continue  # dirty members are re-checked directly, not through the funnel
         keep, reason = is_candidate(m)
         if keep:
             candidates.append(m)
         else:
             funnel[reason] += 1
-    print("org models: %d -> candidates: %d" % (len(models), len(candidates)))
+    if mode == "full":
+        print("org models: %d -> candidates: %d" % (len(models), len(candidates)))
+    else:
+        print("candidates among changed non-members: %d" % len(candidates))
     for reason, n in funnel.most_common():
         print("  -%3d  %s" % (n, reason))
 
-    results = []
+    results, stale_members, errors = [], [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        for r in ex.map(fetch_candidate, [m["id"] for m in candidates]):
-            results.append(evaluate_candidate(r))
+        for r in ex.map(lambda m: evaluate_candidate(fetch_candidate(m["id"])), candidates):
+            results.append(r)
+        if mode == "incremental":
+            for mid, r in zip(dirty_members, ex.map(fetch_candidate, dirty_members)):
+                if "error" in r and "info" not in r:
+                    if "HTTP 404" in str(r.get("error")):
+                        stale_members.append({"id": mid, "reason": "repo deleted"})
+                    else:
+                        errors.append({"id": mid, "reason": str(r.get("error"))[:200]})
+                    continue
+                count, _, _ = count_card(r.get("readme") or "", (r.get("info") or {}).get("model-index"))
+                if count > MAX_EVALS:
+                    stale_members.append({"id": mid, "reason": "%d card evals > %d since last refresh" % (count, MAX_EVALS)})
 
     queue = [r for r in results if r.get("queued")]
     not_queued = [{"id": r["id"], "evals": r.get("evals"), "reason": r.get("reason")}
                   for r in results if not r.get("queued") and r.get("evals") is not None and r["evals"] > MAX_EVALS]
     excluded = [{"id": r["id"], "reason": r.get("reason")} for r in results
                 if not r.get("queued") and r.get("evals") is not None and r["evals"] <= MAX_EVALS]
-    errors = [{"id": r["id"], "reason": r.get("reason") or r.get("error")} for r in results if r.get("evals") is None]
+    errors += [{"id": r["id"], "reason": r.get("reason") or r.get("error")} for r in results if r.get("evals") is None]
 
     scan = {
-        "date": time.strftime("%Y-%m-%d"),
+        "date": date_str,
         "author": author,
         "max_evals": MAX_EVALS,
-        "funnel": {"org_models": len(models), "candidates": len(candidates), **dict(funnel)},
+        "mode": mode,
+        "since": since,
+        "funnel": {"org_models": len(models), "examined": len(pool),
+                   "candidates": len(candidates), **dict(funnel)},
         "queue": queue,
+        "stale_members": stale_members,
         "excluded_at_verification": excluded,
         "not_queued_more_than_max_evals": not_queued,
         "errors": errors,
@@ -524,9 +634,16 @@ def cmd_scan(args):
     with open(out_path, "w") as f:
         json.dump(scan, f, indent=1, sort_keys=True)
 
+    if mode == "incremental":
+        print("\nincremental: %d examined, %d new qualifiers (queue additions), %d stale members (removals)"
+              % (len(pool), len(queue), len(stale_members)))
     print("\nqueue (<= %d card evals, verified): %d models" % (MAX_EVALS, len(queue)))
     for r in sorted(queue, key=lambda r: r["id"]):
         print("  %-70s evals=%-3d base=%s" % (r["id"], r["evals"], r.get("base") or "?"))
+    if stale_members:
+        print("\nstale members (to remove):")
+        for r in stale_members:
+            print("  %-70s %s" % (r["id"], r["reason"]))
     if excluded:
         print("\nexcluded at verification (%d):" % len(excluded))
         for r in excluded:
@@ -535,9 +652,10 @@ def cmd_scan(args):
         print("\nERRORS (fetch failures — counts unknown, NOT queued; re-run): %d" % len(errors))
         for r in errors:
             print("  %-70s %s" % (r["id"], r["reason"]))
-    print("\nnot queued (%d card evals > %d): %d models" % (MAX_EVALS, MAX_EVALS, len(not_queued)))
-    for r in sorted(not_queued, key=lambda r: r["evals"]):
-        print("  %-70s evals=%s" % (r["id"], r["evals"]))
+    if mode == "full":
+        print("\nnot queued (%d card evals > %d): %d models" % (MAX_EVALS, MAX_EVALS, len(not_queued)))
+        for r in sorted(not_queued, key=lambda r: r["evals"]):
+            print("  %-70s evals=%s" % (r["id"], r["evals"]))
     print("\nwrote %s" % out_path)
 
 
@@ -568,24 +686,39 @@ def collection_url(slug):
     return HF + "/api/collections/" + slug
 
 
-def find_or_create_collection(tok):
-    """Returns the collection's slug (e.g. 'RedHatAI/eval-queue-abcdef12')."""
+def _norm_collection_slug(c):
+    slug = c.get("slug") or c.get("id")
+    if "/" not in str(slug):
+        slug = "%s/%s-%s" % (ORG, slug, c.get("id")) if c.get("id") else ORG + "/" + str(slug)
+    return slug
+
+
+def find_collection(tok):
+    """Read-only lookup: returns (slug, description) or (None, None). Never creates."""
     url = HF + "/api/collections?owner=" + urllib.parse.quote(ORG) + "&limit=100"
     while url:
         data = api_get(url[len(HF):], tok)
         items = data if isinstance(data, list) else (data.get("collections") or data.get("items") or [])
         for c in items:
             if c.get("title") == COLLECTION_TITLE:
-                slug = c.get("slug") or c.get("id")
-                if "/" not in str(slug):
-                    slug = "%s/%s-%s" % (ORG, slug, c.get("id")) if c.get("id") else ORG + "/" + str(slug)
-                return slug
+                slug = _norm_collection_slug(c)
+                desc = c.get("description") or ""
+                if not desc:  # listing may omit the description; the collection GET has it
+                    desc = api_get("/api/collections/" + slug, tok).get("description") or ""
+                return slug, desc
         nxt = data.get("next") if isinstance(data, dict) else None
         url = (HF + nxt) if nxt else None
+    return None, None
 
+
+def find_or_create_collection(tok):
+    """Returns the collection's slug (e.g. 'RedHatAI/eval-queue-abcdef12')."""
+    slug, _ = find_collection(tok)
+    if slug:
+        return slug
     status, text, _ = http(HF + "/api/collections", token=tok,
                            data={"title": COLLECTION_TITLE, "namespace": ORG,
-                                 "description": COLLECTION_DESCRIPTION, "private": True})
+                                 "description": COLLECTION_DESCRIPTION_BASE, "private": True})
     if status not in (200, 201):
         sys.exit("create collection -> HTTP %d: %s" % (status, text[:300]))
     c = json.loads(text)
@@ -596,10 +729,14 @@ def find_or_create_collection(tok):
     return slug
 
 
+def collection_items(slug, tok):
+    data = api_get("/api/collections/" + slug, tok)
+    return data, data.get("items") or []
+
+
 def get_collection_items(tok):
     slug = find_or_create_collection(tok)
-    data = api_get("/api/collections/" + slug, tok)
-    items = data.get("items") or []
+    data, items = collection_items(slug, tok)
     return slug, data, items
 
 
@@ -624,6 +761,7 @@ def cmd_collection(args):
     if action == "list":
         slug, data, items = get_collection_items(tok)
         print("collection: %s (%s) — %d items" % (slug, "private" if data.get("private") else data.get("visibility", "?"), len(items)))
+        print("description: %s" % (data.get("description") or "(none)"))
         for it in sorted(items, key=lambda i: str(item_repo_id(i))):
             print("  %-70s %s" % (item_repo_id(it), item_note(it)[:90]))
 
@@ -634,8 +772,16 @@ def cmd_collection(args):
         slug, data, items = get_collection_items(tok)
         current = {item_repo_id(it): it for it in items}
         to_add = sorted(set(desired) - set(current))
-        to_remove = sorted(set(current) - set(desired))
-        print("collection %s: %d items; scan queue: %d" % (slug, len(current), len(desired)))
+        if scan.get("mode") == "incremental":
+            # Only the members the scan re-checked and found stale are removed; members
+            # whose repos did not change were never re-fetched and stay.
+            to_remove = sorted({s["id"] for s in scan.get("stale_members", [])} & set(current))
+        else:
+            to_remove = sorted(set(current) - set(desired))
+        new_desc = collection_description(scan["date"])
+        assert len(new_desc) <= 150, "description exceeds the Hub's 150-char limit"
+        print("collection %s: %d items; scan (%s, since %s): %d qualifiers"
+              % (slug, len(current), scan.get("mode"), scan.get("since"), len(desired)))
         for rid in to_add:
             r = desired[rid]
             note = "base=%s; %s; ckpt=%s GB; %d card evals (%s)" % (
@@ -654,7 +800,12 @@ def cmd_collection(args):
                 status, text, _ = http(collection_url(slug) + "/items/" + str(iid), token=tok, method="DELETE")
                 if status not in (200, 204):
                     sys.exit("remove %s -> HTTP %d: %s" % (rid, status, text[:300]))
-        if not args.get("apply"):
+        print("  description -> %s" % new_desc)
+        if args.get("apply"):
+            status, text, _ = http(collection_url(slug), token=tok, data={"description": new_desc}, method="PATCH")
+            if status not in (200, 201):
+                sys.exit("update description -> HTTP %d: %s" % (status, text[:300]))
+        else:
             print("\ndry run — pass --apply to change the collection")
 
     elif action == "add":
@@ -685,30 +836,32 @@ def main(argv):
     cmd, rest = argv[1], argv[2:]
     if cmd == "count":
         if not rest:
-            sys.exit("usage: queue.py count <model_id> [--debug]")
+            sys.exit("usage: eval_queue.py count <model_id> [--debug]")
         cmd_count({"model_id": rest[0], "debug": "--debug" in rest[1:]})
     elif cmd == "scan":
-        args = {"author": ORG, "out": "scan.json"}
+        args = {"author": ORG, "out": "scan.json", "full": False}
         i = 0
         while i < len(rest):
             if rest[i] == "--author":
                 args["author"] = rest[i + 1]; i += 2
             elif rest[i] == "--out":
                 args["out"] = rest[i + 1]; i += 2
+            elif rest[i] == "--full":
+                args["full"] = True; i += 1
             else:
                 sys.exit("unknown arg: " + rest[i]); i += 1
         cmd_scan(args)
     elif cmd == "collection":
         if len(rest) < 1:
-            sys.exit("usage: queue.py collection <list|sync|add|remove> ...")
+            sys.exit("usage: eval_queue.py collection <list|sync|add|remove> ...")
         action, cargs = rest[0], rest[1:]
         if action == "sync":
             if not cargs:
-                sys.exit("usage: queue.py collection sync <scan.json> [--apply]")
+                sys.exit("usage: eval_queue.py collection sync <scan.json> [--apply]")
             args = {"action": "sync", "scan_json": cargs[0], "apply": "--apply" in cargs[1:]}
         elif action in ("add", "remove"):
             if not cargs:
-                sys.exit("usage: queue.py collection %s <model_id> [--note ...]" % action)
+                sys.exit("usage: eval_queue.py collection %s <model_id> [--note ...]" % action)
             note = cargs[2] if action == "add" and len(cargs) > 2 and cargs[1] == "--note" else None
             args = {"action": action, "model_id": cargs[0], "note": note}
         elif action == "list":
