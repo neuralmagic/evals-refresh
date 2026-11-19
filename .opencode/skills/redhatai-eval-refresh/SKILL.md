@@ -29,7 +29,9 @@ whole file is rewritten on every refresh, keeping only the "Completed" section):
 
 1. List the org: `GET https://huggingface.co/api/models?author=RedHatAI&limit=1000`, following
    the `Link: <...>; rel="next"` header. Anonymous access is fine — ~1000 small requests at
-   concurrency ≤ 8 stayed under the rate limit when this was built; pace down on 429s.
+   concurrency ≤ 8 stayed under the rate limit when this was built; pace down on 429s. Do not
+   pass `expand[]` to this endpoint: the response items then come back without the default
+   fields (`tags`), which silently breaks every filter below.
 2. Keep a model iff **all** hold:
    - **Quantized**: it has a `base_model:quantized:<base>` tag or a quantization-format tag
      (fp8, fp4, int4, mxfp4, nvfp4, w4a16, w8a8, w8a16, gptq, awq, marlin, compressed-tensors,
