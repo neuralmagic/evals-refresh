@@ -29,9 +29,12 @@ which git ignores; read it too if it exists.
    `assets/generate_config.json` for Gemma, which has no effort levels). Adapt as needed for
    each model family.
 4. **Task definitions come from `inspect_evals` or `inspect_harbor` unchanged.** No task wrappers
-   in this repo. If a task is broken, fix it upstream (PR from a fork under github.com/eldarkurtic) and
+   in this repo. If a task is broken, fix it upstream (PR from a fork under github.com/neuralmagic) and
    consume the fix from the fork branch (pip install from git, or a Harbor registry pin to the fork
    commit); document it under the README's "Patches for upstream" section. No local patch scripts.
+   When the fix merges upstream, point the dir at the upstream commit instead of the fork, and check that the
+   upstream commit applied to the dir's pinned base gives the source that produced the results (`git apply` the
+   upstream commit's diff onto the base checkout and compare with the fork commit).
 5. **The model card's protocol decides comparability.** Before adding a task, read what the card
    reports (subset, single-shot vs agentic, judge, epochs) and say in the README whether our number
    is comparable. `eval_coverage_matrix.md` at the repo root maps benchmarks to packages,
@@ -56,7 +59,12 @@ which git ignores; read it too if it exists.
   `agentic-and-coding`, `general-tool-usage`, `long-context`, `multimodal`.
 - Every task directory is standalone. No shared includes, nothing to source. Duplication across
   models is deliberate; drift between copies is expected and is the point (each copy documents
-  what ran).
+  what ran). One exception: a `local_orchestrator.sh` may source `tools/vllm_server.sh`, which starts, health-checks
+  and stops vLLM servers from a venv (`VLLM_VENV`) or a podman image (`VLLM_IMAGE`; setting both is an error) and stops them
+  on any exit. It holds only environment glue; what is measured stays in the dir's `serve.sh` and `run_eval.sh`. The
+  orchestrator sets `DEFAULT_VLLM_IMAGE`, used when neither is set, to the image that produced the dir's results, and `logs/serve.log` records the one a run
+  used. The Muse-Spark-Open dirs use it; other dirs still inline their venv or podman commands. Move a dir
+  over when you touch its orchestrator, not as a sweep.
 - `serve.sh` and `run_eval.sh` are plain, readable bash with env-var overrides
   (`MODEL`, `PORT`, `TP`, `DP`, `EPOCHS`, `LOG_DIR`, `MAX_TOKENS`, `MAX_CONNECTIONS`, ...). No
   defensive scaffolding, no logging frameworks, no argument parsers.
@@ -157,12 +165,16 @@ pip install <package-spec-or--r-requirements-file>
 | environment | used by | create with |
 |---|---|---|
 | vLLM server | `serve.sh` | `uv pip install vllm` |
-| Inspect client for `inspect_evals` tasks | `run_eval.sh` | `uv pip install inspect-evals openai` |
+| Inspect client for `inspect_evals` tasks | `run_eval.sh` | `uv pip install git+https://github.com/neuralmagic/inspect_evals.git openai` |
 | Inspect client for `inspect_harbor` tasks | `run_eval.sh` | `uv pip install inspect-harbor httpx2 "openai==3.14.0"` |
 
-These installs are the starting point for a new task. To reproduce a dir's results, create the environments from its
-`server_requirements.txt` and `client_requirements.txt` instead (same `uv venv` / `uv pip install` pattern, substituting
-`-r server_requirements.txt` / `-r client_requirements.txt` for the package spec), as its README Setup shows.
+Always install `inspect_evals` from `github.com/neuralmagic/inspect_evals` (not PyPI). That fork is this repo's
+source of truth for task definitions and carries tasks and fixes that are not on a PyPI release yet (e.g. MRCR).
+Pin a commit or branch in the task README and `client_requirements.txt` when a dir needs a specific revision;
+otherwise `main` is fine for a new env. These installs are the starting point for a new task. To reproduce a
+dir's results, create the environments from its `server_requirements.txt` and `client_requirements.txt` instead
+(same `uv venv` / `uv pip install` pattern, substituting `-r server_requirements.txt` / `-r client_requirements.txt`
+for the package spec), as its README Setup shows.
 
 `inspect-harbor` depends on `litellm`, which pins `openai<3`, while Inspect's OpenAI-compatible
 providers need `openai>=3`; installing `openai==3.14.0` last overrides the pin and the resulting
@@ -307,6 +319,73 @@ Python.
   It is noise if it appears at the moment the eval finished.
 - **Inspect's multiple-choice parser** requires `ANSWER: <LETTER>` on the last line; a model that
   writes `ANSWER: $A` can never be parsed. Check the unparsed count.
+- **DSA/MLA models with a huge native context can OOM vLLM's post-graph warm-up on Hopper.** GLM-5.3's
+  sparse-indexer JIT warm-up allocates ~24 GiB per GPU (warm-up batch × 64 heads × `max_model_len` × fp32) with
+  the checkpoint's default 1M window, after CUDA graphs captured fine. Cap `--max-model-len` (262144 worked and
+  matches the repo's other multi-turn agent dirs) unless the recipe explicitly fits the full window on your GPUs.
+- **Size agentic concurrency to the KV pool, not the GPU count.** MLA-style KV costs ~50 KB/token: GLM-5.3 on
+  8xH200 holds only ~1.19M KV tokens (a hybrid-attention model of similar size holds ~20M), so DeepSWE ran 10
+  concurrent ~120k-token histories and Terminal-Bench 32. Read the "GPU KV cache size" line in serve.log before
+  choosing `--max-connections`; oversubscribing evicts prefix-cached histories and re-prefills them every turn.
+- **Inspect's vLLM context-window discovery loses a race with compaction.** The `vllm` provider learns the
+  served `max_model_len` from `/v1/models` during the first `generate()`, but the ReAct agent's compaction
+  resolves its threshold (`0.9 × window`) on the first `compact_fn`, which can run before that call. The race
+  goes both ways in practice: some samples use Inspect's 128,000 default and a threshold of 115,200, others use
+  the real window and 235,929, and Inspect caches whichever it resolved for the whole run. `CompactionEdit` only
+  clears old tool results and thinking blocks, keeping the last 3 tool-use/result pairs and all conversation
+  text, so the compacted size of a long trajectory rises toward the threshold. Once the remaining material
+  cannot be reduced, the sample dies with `RuntimeError: Compaction insufficient`. A correct window is not a
+  cure: one sample failed at 237,577 tokens against 235,929. Inspect records such a death as a *sample error*,
+  so the sample drops out of the scored denominator without saying so. Count it as a failure, per section 3. The
+  problem is not model-specific. It has hit deepswe-1.1 with 5 to 15 samples per model, swe-bench-pro and
+  terminal-bench-2.1 across every family, and 12 such errors in one deepswe run tripped `--fail-on-error 0.1`
+  and forced an `inspect eval-retry`. No CLI or env override exists. Pinning the window needs `set_model_info()`
+  in Python, which is a wrapper, so only with the user's agreement. The proper fix is upstream: inspect-ai should
+  re-resolve the threshold after registration, and inspect_harbor, which hardcodes `CompactionEdit()`, could
+  expose the threshold as a task arg. The 128,000 is only the compaction trigger and never a hard cap, so
+  contexts above it still occur.
+- **vLLM 0.32 returns reasoning in the `reasoning` message field** (OpenAI style), not `reasoning_content`.
+  inspect-ai 0.3.273 parses it into a separate reasoning content part; check the field name in a raw
+  `/v1/chat/completions` response before concluding the reasoning parser is broken.
+- **Killing a wrapper shell orphans its grandchildren.** A harness timeout that kills `bash -c` does not reach a
+  vLLM server or eval started inside it; a vLLM server whose workers died mid-startup then hangs forever as an
+  unhealthy process with a zombie EngineCore. Kill servers by exact PID, confirm `nvidia-smi` shows 0 MiB before
+  restarting, and never `pkill -f` a pattern that appears in your own command string (use the bracket trick:
+  `pgrep -f "vllm [s]erve"`).
+- **vLLM ignores SIGTERM, and a reservation can be released while its workers still hold GPU memory.** A
+  `kill $SERVER_PID` reaches only the launcher: EngineCore and the TP workers survive and keep their memory, and
+  with `canhazgpu run` the reservation is released the moment the wrapped command exits, so the GPUs are handed
+  out again while orphaned workers still occupy them. Start the server with `setsid` so it gets its own process
+  group, tear down with `kill -9 -- -$PGID`, and block until `nvidia-smi` reports 0 MiB on *your* GPUs before
+  exiting (`CUDA_VISIBLE_DEVICES` ids only: summing all GPUs never reaches zero on a shared host because other
+  tenants hold the rest). An orchestrator that merely `kill`s and exits caused a real double-allocation race here.
+- **Completion watchers must not race the eval start.** A `while pgrep inspect-eval` loop started during server
+  startup exits immediately (the eval process does not exist yet) and reports a false "finished". Watch the
+  orchestrator script's process instead, or start the watcher after samples are in flight.
+- **The card and `generation_config.json` can disagree on a sampling value** (Muse Spark Open: the card says
+  "top_k = disabled", `generation_config.json` sets 64). Rule 2 follows `generation_config.json`, which is also what
+  vLLM applies as the server default when Inspect drops `--top-k`; say so in the README's protocol note.
+- **A compressed-tensors checkpoint with an activation scheme vLLM does not dispatch loads without error** and runs
+  with the wrong activation precision (an MXFP4-weight / FP8-activation MoE loaded as W4A16 before
+  vllm-project/vllm#59815). Check the quantization method vLLM logs at start-up against the checkpoint's
+  `quantization_config` before the smoke test.
+- **MRCR's `max_model_len` HF auto-detect misses nested `text_config.max_position_embeddings`.** Qwen3.8
+  multimodal configs put the window under `text_config`, so `infer_vllm_max_model_len`'s Hugging Face step returns
+  nothing; the `/v1/models` fallback only helps if the server is already up and reachable during task build. Pass
+  `-T max_model_len=<served window>` explicitly (e.g. 262144 for the native window).
+- **Do not export `HF_HUB_OFFLINE=1` to the Inspect client for MRCR.** The server needs it so DP workers do not 429
+  the Hub while loading a pre-cached checkpoint, but the client still loads `openai/mrcr` (and the model tokenizer)
+  through Hugging Face. Scope offline mode to the server subprocess only. Also leave the client's `HF_HUB_CACHE` /
+  `HF_HOME` alone when the server points at a shared host cache that is not writable by the eval user: the client
+  still needs a writable hub home for `openai/mrcr` and tiktoken; pointing it at a read-only shared cache breaks
+  dataset download. Symlink only the model weights into the client's hub cache if needed.
+- **Unset HTTP(S)_PROXY for the MRCR client when the proxy 403s Hugging Face / tiktoken.** Corporate proxies that
+  allow the Hub for the server path can still reject the client's tokenizer bootstrap. Clear proxy vars for the
+  Inspect process (not necessarily for the whole shell).
+- **MRCR concurrency follows the KV pool, same as agentic tasks.** On one B200 at `max_model_len=262144`, BF16
+  Qwen3.8-27B holds ~1.83M KV tokens per DP replica (~7× at full window) while the NVFP4 sibling holds ~4.43M;
+  this dir used `--max-connections 16` for BF16 vs 32 for NVFP4. Read "GPU KV cache size" in serve.log before
+  copying the sibling's concurrency.
 - **vLLM's YaRN `--hf-overrides` needs the top-level `max_position_embeddings` bumped too**, not
   just `rope_scaling`. `derived_max_model_len` (`vllm/config/model.py`) rejects `--max-model-len`
   above the config's `max_position_embeddings` *before* applying any scaling, and its comment
@@ -428,9 +507,14 @@ revert these departures:
   results and predate the one-epoch default of section 3; new runs use 1 epoch unless the user asks for more:
   - 3: gpqa-diamond, livecodebench, terminal-bench-2.1, bfcl.
   - 8: aime-2026 (only 30 problems).
-  - 1: mmlu-pro (12k samples), swe-bench-verified, swe-bench-pro, deepswe-1.1, gdpval-aa, tau2-bench, tau3-bench.
+  - 1: mmlu-pro (12k samples), swe-bench-verified, swe-bench-pro, deepswe-1.1, tau2-bench, tau3-bench.
   - 1 for every task of the four Qwen3.8-Flash-Next dirs (RedHatAI, Inferact and nvidia NVFP4, Qwen BF16), at the
     user's request.
+- **Two-phase generous-time rerun (Terminal-Bench 2.1, GLM-5.3-MXFP4xFP8 dirs).** At the user's request, the samples
+  that hit the first pass's time limit (all failed) plus one leaked sample were rerun once at a higher
+  `--time-limit` via `inspect eval --sample-id <comma list>`; each task counts once, the rerun result replacing the
+  first-pass result for those samples. The README documents both phases. Not a default — ask the user before
+  reusing this protocol on another task or model.
 - **Sampling flags.** Inspect's `vllm` provider drops `--top-k` from the request. The value that applies is the
   server default vLLM takes from the checkpoint's `generation_config.json` (logged at vLLM startup).
 - **Qwen3.8-Flash-Next dirs** (8x B200 host):
@@ -444,8 +528,20 @@ revert these departures:
     kept in `logs/superseded_kv_thrash/`.
   - Model loading: vLLM keeps the 51B n-gram table in pinned host memory. Start the two servers one after the
     other, and keep `VLLM_ENGINE_READY_TIMEOUT_S` raised.
-  - RedHatAI's server venv carries a vLLM fix from the `eldarkurtic/vllm` fork (see its README).
-- **Serving topology for multi-turn tasks.** swe-bench-*, deepswe-1.1, bfcl, gdpval-aa, tau2-bench and tau3-bench
+  - RedHatAI's server venv carries the Qwen4Exp compressed-tensors PLE fix of vllm-project/vllm#59431 on top of a
+    nightly that predates its merge (see its README). vLLM 0.32.0 and later releases include the fix.
+- **Muse-Spark-Open dirs** (`RedHatAI_Muse-Spark-Open-816B-A42B-MXFP4xFP8`, 453 GB checkpoint): `serve.sh` sets
+  TP=8 × DP=1 with `--enable-expert-parallel` (the recipe's single-node strategy) for every task, port 8000, 1M
+  context, `muse` reasoning and tool parsers, `--language-model-only` with zero multimodal limits, the Python frontend
+  (the recipe's Rust frontend needs the vllm-rs binary, which a source-built image may lack), and no DSpark speculative
+  decoding (an opt-in recipe feature, default only for Meta's NVFP4 checkpoint). Reasoning effort is a top-level `reasoning_effort` request
+  field (low/medium/high/xhigh, xhigh default) with no enable_thinking kwarg; `--reasoning-effort xhigh` in
+  `run_eval.sh` and `--default-chat-template-kwargs '{"reasoning_effort": "xhigh"}'` in `serve.sh` set it on both
+  sides. Sampling is temperature 1.0, top_p 1.0, top_k 64 (generation_config.json; the card says top_k disabled).
+  Muse Spark support is not in a vLLM release, so `local_orchestrator.sh` runs `serve.sh` inside a podman image built
+  from the vLLM branch (see `local_env_notes.md`) through `tools/vllm_server.sh`; the dirs were created on a host without the GPUs to run them and
+  have no results or requirements files yet.
+- **Serving topology for multi-turn tasks.** swe-bench-*, deepswe-1.1, bfcl, tau2-bench and tau3-bench
   export `TP=8 DP=1` in `local_orchestrator.sh` instead of TP=2 × DP=4. vLLM's prefix cache is per replica, and
   DP routes each turn to a random replica, so agent histories would be prefilled again on every turn. `serve.sh`
   keeps the recipe defaults; the override lives only in the orchestrator.
@@ -464,9 +560,10 @@ revert these departures:
   Qwen dirs need neither, because `--reasoning-effort xhigh` does the job. The Gemma recipe URL is
   `https://recipes.vllm.ai/Google/gemma-4-31B-it`: capital `G`, although the HF org is `google`.
 - **Each dir pins its own client packages.**
+  - inspect_evals: always from `pip install git+https://github.com/neuralmagic/inspect_evals.git` (section 4).
+    Some dirs pin a fix branch or commit of that fork (bfcl, older swe-bench-verified) instead of `main`.
   - inspect_harbor: 0.7.5, 0.7.6, 1.0.0, or a git commit (tau3-bench; the Flash-Next swe-bench-pro and
     deepswe-1.1 dirs).
-  - bfcl and the older swe-bench-verified dirs install inspect_evals from `eldarkurtic/inspect_evals` fork branches.
 
   Before a run, create the client environment from the dir's `client_requirements.txt` and README Setup, or check
   that an environment you already have matches it.
@@ -514,6 +611,13 @@ and `amd_Qwen3.8-27B-Quark-AWQ-MXFP4` copies of these tasks ran before the fixes
   - The task files, including `solution/solve.sh` and `tests/`, are public: `harbor-framework/terminal-bench-2-1`
     on GitHub, and mirrors on the HF Hub (find them with `huggingface.co/api/datasets?search=terminal-bench`).
   - Only the audit catches it when an agent downloads its own task's files.
+  - GLM-5.3-MXFP4xFP8 (2026-10): one sample (`mteb-retrieve`) web-searched its instruction's distinctive phrases,
+    found the HF mirror `harborframework/terminal-bench-2.1`, downloaded its own `solution/solve.sh` and submitted
+    a verbatim copy. Blocking is not possible without breaking the task (its own reference solution needs
+    `huggingface.co` for the embedding model — the same domain as the mirror), so the real fix is upstream:
+    exclude `solution/` from the public mirror (issue drafted for harbor-framework/terminal-bench-2-1). Protocol
+    chosen with the user for that run: rerun the leaked sample and every time-limit failure once at a higher
+    `--time-limit` via `--sample-id`, audit the rerun, and count any repeat leak as a failure.
 - **livecodebench.** The tasks set no network policy, so the agent has internet (the fork changes nothing). Audit
   for lookups of the problem's published solutions.
 - **Any new task with tools.** Check each `task.toml` network policy against what the runner enforces (after a run,
@@ -541,6 +645,13 @@ for s in log.samples:
 ```
 
 - Networked tasks give hundreds of hits; review them by hand.
+- Judge network attempts by their output, not by shell exit codes: `curl -sI URL | head -3; echo $?` reports
+  `head`'s status (0) even when curl could not resolve the host (with `-s` curl prints nothing on failure). The
+  reliable tells are empty output, `http_code 000`, exit 6, or a python `urlopen` name-resolution error.
+- Scanning tool-call *results* for the benchmark's canary GUID (TB: `terminal-bench-canary GUID …`) finds task-file
+  acquisition through channels your URL regex missed. Confirm the source before calling it a leak: files the task
+  ships inside the agent's own container (working files, deliberately visible `environment/tests/`) are not leaks;
+  network fetches of `solution/` or `tests/` are.
 - A leak is any case where the agent obtained:
   - its own task's files (`solution/`, `tests/`);
   - the project's upstream work past the task's base commit: GitHub issues, PRs, commits or files, or a clone or
@@ -580,3 +691,66 @@ lesson you skip will be paid for again.
 
 The internet-access and cheating findings of section 11 show why. They were first recorded only in a few task READMEs,
 so later runs of the same tasks on another host copied an older dir and ran without the fixes.
+
+## 13. Speculative decoding benchmarks
+
+A spec-decode dir measures draft-model acceptance on a real workload. Report the score next to the acceptance
+numbers, as evidence that serving did not break the model, but the acceptance analysis is the deliverable.
+
+- Layout and naming. Use `<org>_<draft-model>/<category>/<task>/`, for example
+  `RedHatAI_Qwen3.8-27B-speculator.dspark/agentic-and-coding/terminal-bench-2.1/`. The directory is named after
+  the speculator because the speculator is the artifact under test. Copy the dir of the same target model's
+  non-spec run and change only serving and analysis, so that task, subset, scaffold, sampling, epochs and limits
+  match. Record the run in the task README, and tick the `Spec` column of `eval_coverage_matrix.md` if that
+  table has one.
+- Serving. Serve the target with its recipe flags and add the draft model with
+  `--speculative-config '{"method":"<method>","model":"<draft>","num_speculative_tokens":K}'`. Take the method
+  and K from the recipe's spec-decode section or from the speculator card, and record the URL. Methods belong to
+  the engine (`dspark`, `eagle3`, `ngram`, and others), so confirm the installed vLLM supports the one you need
+  (`vllm/config/speculative.py`) and that the draft architecture is in the model registry. The draft's TP must
+  be 1 or equal to the target's TP.
+- Per-request metrics. Start the server with `--per-request-spec-decode-metrics detailed`, available from vLLM
+  0.32.0 and marked experimental. Every chat completion then carries `metrics.speculative_decoding` with the
+  mean acceptance length, a dense `acceptance_histogram` counting how many verify steps accepted exactly j
+  draft tokens (length K+1, bonus token excluded), the step and token counts, and the
+  `per_step_accepted` and `per_step_drafted` arrays that only `detailed` emits. Only single-sequence requests
+  (`n == 1`) are populated, and Inspect always sends `n == 1`. The option is independent of
+  `--disable-log-stats`, so leave vLLM's aggregate acceptance line enabled as a cross-check. Set
+  `--served-model-name` to the speculator id, so the eval log names the deployment under test.
+- Topology and concurrency. The draft adds weights and compute, which changes the KV pool. Re-read "GPU KV cache
+  size" in serve.log and keep `concurrency * max_model_len` at or below about 1.2 times the pool (section 9). A
+  small pool also limits how many long-context trajectories you can observe, which is a common reason to run a
+  spec-decode study in the first place.
+- Client. Add `--log-model-api` to `run_eval.sh`. Without it Inspect keeps only the first few model calls per
+  model plus errors, which is not enough for acceptance analysis. With it, every raw request and response is
+  kept, and `ModelCall.response` carries the metrics block, because the OpenAI-compatible provider stores
+  `completion.model_dump()` and the non-standard top-level `metrics` field survives. Logs grow quickly, to
+  hundreds of MB for a few hundred agent turns, so keep `--log-dir` on local disk.
+- Analysis. Use the task's `analyze_spec_decode.py`. `collate` reads every `*.eval` with
+  `read_eval_log(..., resolve_attachments=True)` and writes one row per model call holding the task, epoch,
+  turn, usage and every acceptance field. `analyze` turns that CSV into `report.md`, `report.json` and slice
+  CSVs. Read `sample.events` rather than `sample.messages`, because compaction drops early turns from the
+  messages. Every metric below comes from the histogram and the counts already in the response.
+  - MAL is `1 + accepted_draft_tokens / num_spec_steps`, where the leading 1 is the always-accepted bonus
+    token. Report the pooled value over all steps (micro) as the headline, and the unweighted mean of the
+    per-call values (macro) beside it. Micro weights every verify step equally; macro weights every request
+    equally.
+  - Per-position overall acceptance is `Σ_{i>j} hist[i] / steps`, the probability that position j is accepted.
+    Draft tokens are accepted in prefix order, so this is a tail probability, and the sum over j plus 1
+    reproduces MAL. That is the model-card convention.
+  - Per-position conditional acceptance is `overall[j] / overall[j-1]`, the probability that position j is
+    accepted given that j-1 was. It is the hazard rate. Either rate follows from the other, because the overall
+    rate is the running product of the conditionals.
+  - Thinking against response needs no tokenizer and no extra endpoint. The reasoning block is a prefix of the
+    completion, and its token length is `usage.completion_tokens_details.reasoning_tokens`. Each verify step
+    emits its accepted drafts plus one bonus token, so the step spans follow from `per_step_accepted`; check
+    that the `Σ(a_i + 1)` sum equals `completion_tokens`. Report MAL and both per-position rates per
+    region. The two regions can differ substantially.
+- Report no timing or throughput metric. Tokens per second, wall time and speedup all depend on the host, the
+  concurrency and the topology, so they describe only the run that produced them. Acceptance is the result that
+  transfers to another host.
+- Comparability. Speculative decoding changes what generation costs, not the task or the sampling. Report the
+  score next to the non-spec run's score and state whether the two agree. A large drop means serving broke
+  something, so check `stop_reason`, tool-call parsing, and that reasoning is parsed into a separate content
+  part. Say that the numbers are specific to the engine version and to the draft checkpoint, and that
+  `--per-request-spec-decode-metrics` is experimental.
