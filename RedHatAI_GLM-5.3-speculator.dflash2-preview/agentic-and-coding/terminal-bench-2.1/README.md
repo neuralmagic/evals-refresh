@@ -7,7 +7,7 @@
 | Exec tier | `agent` — one prebuilt Docker container per task (Docker Hub image named in the task's `task.toml`), bash/python tools, hidden verifier |
 | vLLM recipe | https://recipes.vllm.ai/zai-org/GLM-5.3 |
 | Target model | https://huggingface.co/zai-org/GLM-5.3 (FP8, 78-layer `GlmMoeDsaForCausalLM`, ~756 GB) — revision `ba32f8c1` (unchanged since 2026-10-14) |
-| Draft (speculator) | https://huggingface.co/RedHatAI/GLM-5.3-speculator.dflash2-preview (DFlash2, ~4.1 GB, 5-layer Qwen3-style backbone, `num_speculative_tokens=8`) — **revision `3325df9c`** |
+| Draft (speculator) | https://huggingface.co/RedHatAI/GLM-5.3-speculator.dflash2-preview (DFlash2, ~4.1 GB, 5-layer Qwen3-style backbone, `num_speculative_tokens=8`) — **revision `83c1f7eb`** (results below; `3325df9c` kept for comparison) |
 | Task source | https://hub.harborframework.com/datasets/terminal-bench/terminal-bench-2-1 |
 
 This directory measures draft-model acceptance for DFlash2 on real agent trajectories. It is not a leaderboard
@@ -113,10 +113,18 @@ canhazgpu run --gpus 8 --note "TB-2.1 GLM-5.3 DFlash2" -- ./local_orchestrator.s
 inspect view --log-dir ./logs
 ```
 
+To pin a draft revision (see "Model revisions" below) export, before the command above:
+
+```bash
+export SPECULATOR=<hf snapshot dir for the revision>
+export SERVED_NAME=RedHatAI/GLM-5.3-speculator.dflash2-preview   # the client addresses this name
+export LOG_DIR=./logs/rev-<sha>
+```
+
 Smoke-test first with 2 tasks and 2 concurrent samples:
 `canhazgpu run --gpus 8 --note "TB-2.1 GLM-5.3 DFlash2 smoke" -- bash -c 'EPOCHS=1 MAX_CONNECTIONS=2 MAX_SANDBOXES=2 ./local_orchestrator.sh --limit 2'`
 
-Concurrency is 20 in flight, not all 89 tasks at once. This server's MLA KV pool is 947,328 tokens (`GPU KV cache
+Concurrency is 20 in flight, not all 89 tasks at once. This server's MLA KV pool is 979,392 tokens (`GPU KV cache
 size` in `logs/serve.log`: ~90.7 GiB of FP8 weights per B200 leaves ~65 GiB per GPU for KV, and MLA replicates
 the latent KV across TP ranks), and Terminal-Bench histories reach ~30-60k tokens, so 20 x 60k = 1.2M is about
 1.3x the pool. 32 would be ~2x over and would evict prefix-cached agent histories late in the run, forcing a
@@ -126,13 +134,16 @@ re-prefill of the whole history on every turn. Keep `MAX_SANDBOXES` equal to `MA
 
 ```bash
 # from the client venv, because collate needs inspect_ai; analyze alone uses the standard library
-python analyze_spec_decode.py logs -o spec_decode_report
-# or in two steps, to reuse the CSV across analyses
-python analyze_spec_decode.py collate logs -o logs/calls.csv
-python analyze_spec_decode.py analyze logs/calls.csv -o spec_decode_report
+RUN=logs/rev-83c1f7eb        # one directory per served revision
+python analyze_spec_decode.py collate "$RUN" -o "$RUN/calls.csv"
+python analyze_spec_decode.py analyze "$RUN/calls.csv" -o spec_decode_report
 # then the #63587 collapse audit over the same per-call CSV
-python monitor_spec_decode.py audit logs/calls.csv -o spec_decode_report
+python monitor_spec_decode.py audit "$RUN/calls.csv" -o spec_decode_report
 ```
+
+Keep runs apart by revision: export `LOG_DIR=./logs/rev-<sha>` before `local_orchestrator.sh` (that is where the
+`.eval` lands), then move `logs/serve.log` and `logs/canary.*` into the same directory afterwards. Collating a
+directory that holds more than one `.eval` pools the runs, which is not what the numbers above are.
 
 ## Speculative decoding instrumentation
 
@@ -267,27 +278,30 @@ None are needed for the dataset. Two tooling notes, both inherited from the sibl
 
 ### Model revisions behind these numbers
 
-Hugging Face revisions are mutable in practice, so pin them:
+Hugging Face revisions are mutable in practice, so pin them. The results in this directory were produced with:
 
-| role | repo | revision served | note |
-|---|---|---|---|
-| verifier | `zai-org/GLM-5.3` | `ba32f8c19c8738e2c57c71798c601d477a7bf844` | unchanged since 2026-10-14 |
-| draft | `RedHatAI/GLM-5.3-speculator.dflash2-preview` | `3325df9c8ddad6b11afc9623ca6c3833d70fa4ef` | the preview weights these results were produced with |
+| role | repo | revision served |
+|---|---|---|
+| verifier | `zai-org/GLM-5.3` | `ba32f8c19c8738e2c57c71798c601d477a7bf844` (unchanged since 2026-10-14) |
+| draft | `RedHatAI/GLM-5.3-speculator.dflash2-preview` | `83c1f7eb0ee7f12b3b853206a712c8b57362edfa` (2026-11-13) |
 
-The draft repo's `main` has since moved to `83c1f7eb0ee7f12b3b853206a712c8b57362edfa` (2026-11-13, "Replace draft
-weights with validated 4-epoch DFlash2 checkpoint"). That commit swaps `model.safetensors` — identical size,
-different sha256 (`ab5a2e09…` vs `2d8c6616…`) — leaves the architecture and every serving-relevant config field
-unchanged (`block_size` 9, aux layers `[18,30,42,54,66,74]`, 5 layers, hidden 6144; only `speculators_version`
-moved 0.8.0.dev222 → 0.9.0a95), keeps `README.md` byte-identical, and adds `training/final_validation.json`,
-`training_state.json` and an expanded `val_metrics.json`. Its own validation numbers improve slightly
-(accept_len 3.566 → 3.662, accept_rate 41.3% → 42.6%, pos-1 80.4% → 81.2%, pos-8 24.3% → 25.7%), so a re-run on
-`83c1f7eb` should land within a few percent relative on acceptance, with the task score expected to be within
-noise of the 0.854 below. `serve.sh` needs no change to serve either revision; to reproduce a specific one,
-download with `hf download <repo> --revision <sha>` and pass the resulting snapshot as `SPECULATOR`.
+That draft revision is the validated 4-epoch checkpoint ("Replace draft weights with validated 4-epoch DFlash2
+checkpoint"). Relative to the earlier preview revision `3325df9c8ddad6b11afc9623ca6c3833d70fa4ef`, which an
+earlier run of this same directory used (numbers kept below for comparison), the weights were replaced —
+identical size, different sha256 (`ab5a2e09…` vs `2d8c6616…`) — the architecture and every serving-relevant config
+field are unchanged (`block_size` 9, aux layers `[18,30,42,54,66,74]`, 5 layers, hidden 6144; only
+`speculators_version` moved 0.8.0.dev222 → 0.9.0a95), and the card is byte-identical. Its own validation numbers
+improve (accept_len 3.566 → 3.662, accept_rate 41.3% → 42.6%), which is what this re-run measures on agent
+trajectories.
+
+`serve.sh` needs no change between revisions: download the one you want (`hf download <repo> --revision <sha>`) and
+pass the snapshot directory as `SPECULATOR` together with `SERVED_NAME=RedHatAI/GLM-5.3-speculator.dflash2-preview`
+(`SERVED_NAME` exists because the client addresses the model by name, not by checkpoint path).
 
 ## Results
 
-All 89 tasks, 1 epoch each, in a single run (2026-11-11 20:27 → 23:46 UTC, 3 h 19 m wall clock), produced by
+All 89 tasks, 1 epoch each, in a single run on revision `83c1f7eb` (2026-11-20 17:55:35 → 21:34:05 UTC,
+**3 h 38 m** wall clock), produced by
 
 `temperature=1.0, top_p=0.95, reasoning_effort=max, max_tokens=65536 (per turn), max_connections=20,
 max_sandboxes=20, time_limit=7200 s, client_timeout=7200, override_cpus=0, epochs=1, TP=8 DP=1,
@@ -295,111 +309,118 @@ max_model_len=262144, kv-cache-dtype fp8, DFlash2 draft with 8 speculative token
 
 | metric | value |
 |---|---|
-| accuracy over all 89 samples (pass@1) | **0.854 (76 of 89)** |
-| stderr | 0.0376 |
+| accuracy over all 89 samples (pass@1) | **0.865 (77 of 89)** |
+| stderr | 0.0364 |
 | sample errors | 0 |
-| time-limit hits (7200 s) | 7 (6 failed, 1 passed anyway: `schemelike-metacircular-eval`) |
-| per-turn `max_tokens` truncations | 6 model calls (5 samples' worth of calls, all in long generations) |
-| agent turns per sample: median / mean / max | 26 / 43 / 296 |
-| wall clock | 3 h 19 m, 20 samples in flight |
+| time-limit hits (7200 s) | 6 (3 failed, 3 passed anyway: `regex-chess`, `schemelike-metacircular-eval`, `train-fasttext`) |
+| per-turn `max_tokens` truncations | 10 model calls |
+| agent turns per sample: median / mean / max | 26 / 41 / 276 |
+| wall clock | 3 h 38 m, 20 samples in flight |
 
 | tokens / sample | input | output | reasoning |
 |---|---|---|---|
-| mean | 3,470,974 | 84,759 | 68,106 |
-| median | 1,118,065 | 52,683 | 42,024 |
-| max | 39,671,082 | 377,613 | 358,489 |
-| total (89 samples) | 308,916,644 | 7,543,520 | 6,061,434 |
+| mean | 3,253,131 | 84,330 | 69,107 |
+| median | 1,250,392 | 58,135 | 47,731 |
+| max output | — | 678,191 | — |
 
 Input tokens are cumulative over agent turns (the history is resent every turn) and include cache reads.
-Per-turn reasoning is 80% of output tokens, which is why acceptance on the thinking region dominates the pooled
-numbers below.
+Reasoning is ~82% of output tokens, which is why acceptance on the thinking region dominates the pooled numbers.
 
-**The 0.854 is not comparable with the GLM-5.3 model card's 88.2.** Same 89 tasks, but the card used the Claude
-Code 2.1.207 harness on a 6 h timeout with top_p 1.0; this run uses Inspect's ReAct scaffold, one uniform
-7200 s limit, and top_p 0.95. Nor is it comparable with the 0.888 in the sibling
-`RedHatAI_GLM-5.3-MXFP4xFP8` directory, which ran two phases (a 7200 s pass plus a 14400 s re-run of 13
-time-limit hits). Seven samples here hit 7200 s, and one of them still passed.
+**Not comparable with the GLM-5.3 model card's 88.2** (Claude Code 2.1.207 harness, 6 h timeout, top_p 1.0) or with
+the sibling `RedHatAI_GLM-5.3-MXFP4xFP8` directory's 0.888 (two phases, the second at a 14400 s limit).
 
 ### Draft acceptance (DFlash2 on real agent trajectories)
 
-`analyze_spec_decode.py` over the single 89-task log: **3,851 model calls, 3,849 carrying
-`metrics.speculative_decoding`** (the two without are errored calls in `gcode-to-text` and
-`model-extraction-relu-logits`, both time-limit samples), **2,566,160 verify steps**, 0 histogram/step-count
+`analyze_spec_decode.py` over the run: **3,690 model calls, 3,688 carrying `metrics.speculative_decoding`** (the
+two without are errored calls in time-limit samples), **2,483,916 verify steps**, 0 histogram/step-count
 mismatches.
 
 | headline metric | value |
 |---|---|
-| micro MAL (1 + accepted/steps) | **2.938** |
-| mean first-token acceptance rate | 0.659 |
-| macro MAL (unweighted mean of per-call values) | 3.154 |
-| median per-call MAL | 2.971 |
-| mean conditional acceptance rate | 0.696 |
+| micro MAL (1 + accepted/steps) | **3.020** |
+| mean first-token acceptance rate | 0.666 |
+| macro MAL (unweighted mean of per-call values) | 3.250 |
+| median per-call MAL | 3.053 |
+| mean conditional acceptance rate | 0.709 |
 
-Per-call MAL: median 2.971, p05 2.218, p95 4.771. Micro MAL weights every verify step equally, so the long
-thinking-heavy responses dominate it; macro MAL weights every request equally. For reference, the speculator
-card reports acceptance length 3.10–4.66 at temperature 1 on short single-turn datasets (MT-Bench through
-GSM8K); this run is 2.94 pooled over 2.5 M verify steps of mostly long reasoning traces, where acceptance is
-lower (see the thinking/response split).
+Per-call MAL: median 3.053, p05 2.298, p95 4.941.
 
 | position | overall acceptance | conditional acceptance |
 |---|---|---|
-| 0 | 0.659 | 0.659 |
-| 1 | 0.432 | 0.655 |
-| 2 | 0.287 | 0.664 |
-| 3 | 0.195 | 0.682 |
-| 4 | 0.138 | 0.705 |
-| 5 | 0.099 | 0.722 |
-| 6 | 0.073 | 0.738 |
-| 7 | 0.055 | 0.744 |
-
-The conditional column is the per-position hazard rate and it rises with position, so acceptance is slightly
-better than geometric: later draft tokens are accepted a little more often than earlier ones once their
-predecessor was. The overall column is the model-card convention; its sum plus 1 is micro MAL (2.938).
+| 0 | 0.666 | 0.666 |
+| 1 | 0.443 | 0.666 |
+| 2 | 0.299 | 0.675 |
+| 3 | 0.208 | 0.694 |
+| 4 | 0.149 | 0.716 |
+| 5 | 0.109 | 0.736 |
+| 6 | 0.082 | 0.753 |
+| 7 | 0.063 | 0.764 |
 
 | region | verify steps | share of steps | MAL | position-0 acceptance |
 |---|---|---|---|---|
-| thinking | 2,208,539 | 86.1% | 2.746 | 0.643 |
-| response | 357,621 | 13.9% | 4.127 | 0.760 |
+| thinking | 2,172,501 | 87.5% | 2.832 | 0.651 |
+| response | 311,415 | 12.5% | 4.332 | 0.774 |
 
-Acceptance is much higher in the response region (mostly tool-call JSON, which is far more predictable than
-reasoning prose). Only 409 of 2.57 M steps straddled the region boundary and were attributed by the midpoint of
-their accepted tokens.
+Acceptance is much higher in the response region (mostly tool-call JSON). 371 of 2.48 M steps straddled the
+boundary and were attributed by the midpoint of their accepted tokens.
 
-MAL rises with context length: 2.712 below 4k tokens, 2.879 at 4–16k, 2.840 at 16–32k, 2.902 at 32–64k,
-3.040 at 64–128k and 3.054 above 128k. MAL rises mildly with turn number (2.711 at turn 1 to 3.022 at turn
-41+), and within a response it rises from 2.877 in the first decile to 3.394 in the last. Passing and failing
-samples have identical acceptance (micro MAL 2.938 vs 2.937), so acceptance does not predict task success here.
-Dropping calls above the p95 output length moves micro MAL from 2.938 to 3.005; dropping whole samples above
-their p95 output leaves it at 2.935, so long outliers are not driving the result.
+Passing samples average slightly higher acceptance than failing ones (micro MAL 3.042 vs 2.943, macro 3.268 vs
+3.191), consistent with harder tasks producing less predictable text, but the separation is small. Dropping calls above the p95 output length moves micro MAL from 3.020 to 3.063;
+dropping whole samples above their p95 output moves it to 3.040, so long outliers are not driving the result.
 
 ### The #63587 acceptance-collapse audit: clean
 
-Both safeguards came back clean, which is the evidence that the upstream fix (and not luck) carried this run:
+- **Live canary** (one capped 1024-token probe every 2 minutes for the whole 3 h 38 m run): **91 probes, 91 OK,
+  0 collapse flags.** MAL median 3.39, p05 2.64, p95 4.83 (min 2.43, max 5.26) over a median of 303 verify steps;
+  longest trailing zero-accepted run in any probe was 4.
+- **Post-hoc audit** (`monitor_spec_decode.py audit`, full output in `spec_decode_report/collapse_audit.md`):
+  **0 collapsed calls** of 3,688, so "all calls" and "excluding collapsed" are identical above.
 
-- **Live canary** (`monitor_spec_decode.py canary`, one capped 1024-token request every 2 minutes for the
-  whole 3 h 19 m run): **80 probes, 80 OK, 0 collapse flags.** Canary MAL median 3.57, p05 2.67, p95 4.97
-  (min 2.44, max 5.28) over a median of 287 verify steps per probe; the longest trailing run of zero-accepted
-  steps in any probe was 3. Canary output throughput ranged 14–286 tok/s per request, tracking how many
-  Terminal-Bench samples were decoding concurrently (it is a single request sharing the pool with 20 samples).
-- **Post-hoc audit** (`monitor_spec_decode.py audit logs/calls.csv`, full output in
-  `spec_decode_report/collapse_audit.md`): **0 collapsed calls** out of 3,849, so "all calls" and "excluding
-  collapsed" are identical in the table above. For scale, a collapsed call emits ~1 token per verify step
-  against ~3.9 here; had even 5% of calls been dead-from-step-0, pooled micro MAL would have fallen to ~2.4.
+The run used vLLM's default `FULL_AND_PIECEWISE` CUDA graphs (the draft captures FULL graphs), i.e. exactly the
+configuration that fails on 0.32.0/0.33.0; the build served here contains the #64059 fix.
 
-This matters because the run used vLLM's **default `FULL_AND_PIECEWISE` CUDA graphs** (the draft captured 29
-FULL graphs), i.e. exactly the configuration that fails on 0.32.0/0.33.0. No `--compilation-config` override is
-in effect for this result.
+### Re-run on the validated checkpoint: head-to-head with revision `3325df9c`
+
+The same protocol, same serve flags, same task pin, only the draft weights changed:
+
+| metric | `3325df9c` (preview, 2026-11-11) | `83c1f7eb` (validated 4-epoch, 2026-11-20) |
+|---|---|---|
+| accuracy (pass@1) | 0.854 (76/89) | **0.865 (77/89)** |
+| stderr | 0.0376 | 0.0364 |
+| micro MAL | 2.938 | **3.020** (+2.8%) |
+| macro MAL | 3.154 | **3.250** (+3.0%) |
+| median per-call MAL | 2.971 | **3.053** |
+| position-0 acceptance | 0.659 | **0.666** |
+| thinking-region MAL | 2.746 | **2.832** |
+| response-region MAL | 4.127 | **4.332** |
+| verify steps | 2,566,160 | 2,483,916 |
+| collapsed calls | 0 of 3,849 | 0 of 3,688 |
+| sample errors | 0 | 0 |
+| time-limit hits | 7 | 6 |
+| wall clock | 3 h 19 m | 3 h 38 m |
+
+The +3% acceptance is the same direction and rough magnitude as the checkpoint's own validation improvement
+(accept_len +2.7%), which is the expected size of the effect. The score move (76 → 77) is well inside one standard
+error (≈3.6 points), and the per-task churn confirms it is noise rather than a capability change:
+
+- **gained (4):** `dna-insert`, `model-extraction-relu-logits`, `nginx-request-logging`, `path-tracing`
+- **lost (3):** `extract-moves-from-video`, `protein-assembly`, `sanitize-git-repo`
+- **failed in both (9):** `filter-js-from-html`, `gcode-to-text`, `llm-inference-batching-scheduler`,
+  `make-doom-for-mips`, `pytorch-model-cli`, `qemu-alpine-ssh`, `qemu-startup`, `raman-fitting`,
+  `video-processing`
+
+Wall clock grew slightly despite the better acceptance because two samples ran close to the 7200 s cap.
 
 ### Files produced
 
-- `logs/*.eval` — the run (20.8 MB, `--log-model-api` raw payloads included), plus `logs/canary.jsonl`
-  (80 probes) and `logs/serve.log` (KV pool 979,392 tokens, cudagraph capture, kernel warmup).
-- `logs/calls.csv` — one row per model call (3,851), the input to both analyses (kept under `logs/`
-  because the repo's `.gitignore` excludes run artifacts; `logs/` also holds the `.eval` log and the two
-  smoke runs).
-- `logs/smoke-vllm032/`, `logs/smoke-nightly/` — the two 2-task smoke runs (vLLM 0.32.0 + PIECEWISE graphs,
-  then main + default FULL graphs, both 2/2 passed), kept as evidence for the version comparison.
-- `spec_decode_report/` — `report.md`, `report.json`, `acceptance_by_position.csv`, `mal_by_{turn,context,
-  output,epoch,pass,stop_reason,task}.csv`, plus `collapse_audit.md`, `collapse_audit.json` and (when
-  non-empty) `collapsed_calls.csv`.
+- `logs/rev-83c1f7eb/` — this run: `*.eval` (`--log-model-api` raw payloads), `calls.csv`, `serve.log`,
+  `canary.jsonl`.
+- `logs/rev-3325df9c/` — the earlier preview-weights run, same layout, kept for the comparison above.
+- `logs/smoke-vllm032/`, `logs/smoke-nightly/` — the two 2-task smoke runs (vLLM 0.32.0 + PIECEWISE graphs, then
+  main + default FULL graphs), both 2/2 passed.
+- `spec_decode_report/` — `report.md`, `report.json`, `acceptance_by_position.csv`,
+  `mal_by_{turn,context,output,epoch,pass,stop_reason,task}.csv`, plus `collapse_audit.md`, `collapse_audit.json`
+  and (when non-empty) `collapsed_calls.csv`.
 
+`logs/` and `spec_decode_report/` are run artifacts and stay out of git, as the repo's `.gitignore` intends; only
+the 8 code/doc files are committed.

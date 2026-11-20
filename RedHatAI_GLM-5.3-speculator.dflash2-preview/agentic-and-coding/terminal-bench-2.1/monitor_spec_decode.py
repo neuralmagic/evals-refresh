@@ -147,6 +147,9 @@ def canary(args: argparse.Namespace) -> int:
     stop_path = Path(args.stop_file) if args.stop_file else None
     healthy: list[float] = []
     n = 0
+    # One file per run: truncate on start so probes from an earlier run cannot be mixed into this one's
+    # evidence (the orchestrator starts a fresh canary for every run).
+    log_path.write_text("")
     print(
         f"canary: probing {args.base_url} model={args.model} every {args.interval}s, "
         f"max_tokens={args.max_tokens}; log={log_path}",

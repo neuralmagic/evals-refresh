@@ -99,7 +99,9 @@ echo "serve: cudagraph workaround -> $(grep -oE 'cudagraph_mode[^,}]*' logs/serv
 
 # Side-channel probe for acceptance collapse, one capped-length request every 2 minutes. It is independent of
 # Inspect: the definitive per-call evidence is the eval log, which monitor_spec_decode.py audit post-processes.
-CANARY_MODEL="${SPECULATOR:-RedHatAI/GLM-5.3-speculator.dflash2-preview}"
+# The canary must address the served name, not the checkpoint location: when SPECULATOR is a pinned local
+# snapshot path, serve.sh advertises SERVED_NAME instead (see the comment in serve.sh).
+CANARY_MODEL="${SERVED_NAME:-${SPECULATOR:-RedHatAI/GLM-5.3-speculator.dflash2-preview}}"
 rm -f logs/canary.stop logs/collapse_detected.jsonl
 nohup python monitor_spec_decode.py canary \
   --base-url "http://localhost:${PORT}/v1" --model "$CANARY_MODEL" \

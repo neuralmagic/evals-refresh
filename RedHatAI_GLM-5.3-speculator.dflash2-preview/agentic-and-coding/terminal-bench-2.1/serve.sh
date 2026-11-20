@@ -38,6 +38,11 @@ set -euo pipefail
 MODEL="${MODEL:-zai-org/GLM-5.3}"
 MODEL_PATH="${MODEL_PATH:-$MODEL}"   # HF id, or a local copy of the checkpoint
 SPECULATOR="${SPECULATOR:-RedHatAI/GLM-5.3-speculator.dflash2-preview}"
+# SPECULATOR may be an HF repo id or a local snapshot path (to pin a revision: `hf download <repo>
+# --revision <sha>` then SPECULATOR=<snapshot dir>). The served name must stay stable across those two forms,
+# because the client addresses the model by name (run_eval.sh's `vllm/<MODEL>`): override SERVED_NAME when
+# SPECULATOR is a path.
+SERVED_NAME="${SERVED_NAME:-$SPECULATOR}"
 NUM_SPEC_TOKENS="${NUM_SPEC_TOKENS:-8}"   # card's acceptance tables: 8 draft tokens, adaptive verification off
 CUDAGRAPH_MODE="${CUDAGRAPH_MODE:-}"   # "" = vLLM default graphs; PIECEWISE/NONE = #63587 escape hatch
 PORT="${PORT:-8000}"
@@ -71,5 +76,5 @@ exec vllm serve "$MODEL_PATH" \
   --enable-auto-tool-choice --tool-call-parser glm47 \
   --speculative-config "{\"method\":\"dflash\",\"model\":\"${SPECULATOR}\",\"num_speculative_tokens\":${NUM_SPEC_TOKENS}}" \
   --per-request-spec-decode-metrics detailed \
-  --served-model-name "$SPECULATOR" \
+  --served-model-name "$SERVED_NAME" \
   --host 0.0.0.0 --port "$PORT"
