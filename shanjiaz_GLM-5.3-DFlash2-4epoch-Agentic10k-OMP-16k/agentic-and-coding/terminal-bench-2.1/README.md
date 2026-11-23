@@ -21,6 +21,8 @@ This directory measures draft acceptance on the observed agent trajectories. Poo
 - `analyze_spec_decode.py` is the existing sibling's offline acceptance analyzer, copied unchanged.
 - `monitor_spec_decode.py` is the existing sibling's acceptance-collapse monitor and audit, copied unchanged.
 - `results.json` and `acceptance_by_position.csv` contain sanitized acceptance results and provenance.
+- [report.md](report.md) contains the generated acceptance tables, turn/context/output breakdowns and historical per-position comparison.
+- [mal_by_task.csv](mal_by_task.csv) contains acceptance aggregates for all 89 tasks.
 - `.gitignore` keeps the setup's local model cache and environments out of version control.
 - `README.md` records the protocol and reproduction steps.
 
