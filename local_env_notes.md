@@ -37,7 +37,10 @@ Keep them in `local_env_notes.local.md` next to this file, which git ignores, an
 - Qwen4Exp (Qwen3.8-Flash-Next) keeps its 51B n-gram table in pinned host memory. While a server loads, every DP
   worker holds a private host copy (about 136 GB each for the BF16 table), so two DP=4 servers starting together need
   about 1.1 TB of RAM and evict the page cache. Start the servers one after the other.
-- On a shared host, check `nvidia-smi` (`amd-smi` on AMD) before claiming GPUs. Stop processes by exact PID:
+- On a shared host, use its GPU reservation system if it has one (e.g. canhazgpu's `chg run --gpus N -- <cmd>`, which
+  queues, sets `CUDA_VISIBLE_DEVICES` and releases on exit; `local_orchestrator.sh` inherits `CUDA_VISIBLE_DEVICES`).
+  Idle-looking GPUs may be reserved by someone whose server is still loading, and a server started on them fails or
+  evicts theirs. Otherwise check `nvidia-smi` (`amd-smi` on AMD) before claiming GPUs. Stop processes by exact PID:
   `pgrep -f`/`pkill -f` patterns can match other users' processes or your own shell.
 - **`nvidia-smi` idle at 0 MiB is not enough to claim a GPU.** Some B200s return `CUDA_ERROR_UNKNOWN` from
   `cuDevicePrimaryCtxRetain` / `torch.cuda.set_device` while looking free (no process, Default compute mode). Probe
@@ -62,6 +65,13 @@ Keep them in `local_env_notes.local.md` next to this file, which git ignores, an
   MXFP4-weight / FP8-activation MoE path (vllm-project/vllm#59815, merged 2026-10-14, included in the PR branch); the
   start-up log must show `CompressedTensorsW4A8Mxfp4MoEMethod`, otherwise the experts run with BF16 activations. The
   checkpoint is 453 GB: one TP=8 replica with expert parallelism on an 8-GPU H200/B200/B300 node, nothing smaller.
+- GLM-5.3-Flash (`zai-org/GLM-5.3-Flash`, arch `glm5_next`: hybrid KDA linear attention + NoPE sparse MLA, 320B/18B,
+  about 306 GiB of FP8 weights) is in vLLM's model registry from release 0.32.0 (the recipe, older than the release,
+  still asks for a nightly or the `vllm/vllm-openai:glm53-flash` image) and needs FlashInfer 0.6.17 or newer for the
+  sparse-MLA kernels. On Hopper its KV cache must be BF16: the recipe's `--kv-cache-dtype fp8` is a Blackwell-only
+  override ("Hopper runs BF16 KV"), and the Hopper override is `--no-enable-flashinfer-autotune`. The recipe sets
+  `VLLM_ENGINE_READY_TIMEOUT_S=3600`. The checkpoint's 1M default window hits the sparse-indexer warm-up OOM of AGENTS.md
+  section 9 on H200; cap `--max-model-len`.
 - Serving from a podman image on NVIDIA (when the vLLM you need is a branch build): give the container the GPUs
   through the NVIDIA Container Toolkit's CDI spec (`nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml` once per
   host, then `--device nvidia.com/gpu=all`; `CUDA_VISIBLE_DEVICES` selects GPUs inside), `--ipc host` for NCCL and the
@@ -72,7 +82,10 @@ Keep them in `local_env_notes.local.md` next to this file, which git ignores, an
   The same pattern serves a vLLM release: pull `docker.io/vllm/vllm-openai:v<version>` and pin it by digest (query
   `registry-1.docker.io/v2/vllm/vllm-openai/manifests/v<version>` with an anonymous pull token; the
   `Docker-Content-Digest` header is the digest). To serve a Hub id from inside the container, mount the host's HF cache
-  (`HF_HOME`) on `/root/.cache/huggingface` and pass `HF_TOKEN` and `HF_HUB_OFFLINE` through; `podman run -e VAR`
+  (`HF_HOME`) on `/root/.cache/huggingface` and pass `HF_TOKEN` and `HF_HUB_OFFLINE` through; to serve a snapshot of a
+  shared hub cache that is not under `HF_HOME` as a local path, mount the whole cache read-only at its host path (the
+  snapshot's files are relative symlinks into the cache's `blobs/`, which may link on into a deduplicated store, so
+  mounting only the snapshot directory leaves them dangling; hardlinking the blobs fails on files you don't own); `podman run -e VAR`
   without a value forwards VAR only when it is set on the host, so unset overrides fall back to `serve.sh`'s defaults.
   A server that the task sandboxes (Docker) must reach, such as the tau3-bench user simulator, has to be published on
   all interfaces (`-p PORT:PORT`), not on 127.0.0.1: the sandboxes call the host's primary IP. With rootless podman and
@@ -217,5 +230,7 @@ Setup gives the commands), name and place them as you like, and point `local_orc
   commit in `pip freeze`.
 - The MXFP4 Qwen3.8-27B DeepSWE dirs ran stock inspect-harbor 1.0.0, for its verifier fixes, without the network fix.
   Don't reuse that setup for new DeepSWE runs.
+- A venv made with `uv venv` has no `pip` module, so `python -m pip freeze` fails with "No module named pip"; freeze
+  it with `uv pip freeze --python <venv>/bin/python` (`tools/run_glm53_flash_pair.sh` tries pip, then uv).
 - A `client_requirements.txt` that contains litellm next to `openai==3.14.0` installs only with
   `pip install --no-deps -r client_requirements.txt`; a resolving install fails on litellm's `openai<3` pin.

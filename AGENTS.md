@@ -63,7 +63,7 @@ which git ignores; read it too if it exists.
   and stops vLLM servers from a venv (`VLLM_VENV`) or a podman image (`VLLM_IMAGE`; setting both is an error) and stops them
   on any exit. It holds only environment glue; what is measured stays in the dir's `serve.sh` and `run_eval.sh`. The
   orchestrator sets `DEFAULT_VLLM_IMAGE`, used when neither is set, to the image that produced the dir's results, and `logs/serve.log` records the one a run
-  used. The Muse-Spark-Open dirs use it; other dirs still inline their venv or podman commands. Move a dir
+  used. The Muse-Spark-Open and GLM-5.3-Flash pair dirs use it; other dirs still inline their venv or podman commands. Move a dir
   over when you touch its orchestrator, not as a sweep.
 - `serve.sh` and `run_eval.sh` are plain, readable bash with env-var overrides
   (`MODEL`, `PORT`, `TP`, `DP`, `EPOCHS`, `LOG_DIR`, `MAX_TOKENS`, `MAX_CONNECTIONS`, ...). No
@@ -163,9 +163,14 @@ log.results.scores                  # accuracy, stderr
 log.stats.model_usage               # run totals: input / output / reasoning tokens
 for s in log.samples:
     s.output.usage                  # per-sample tokens (reasoning counted separately)
-    s.output.stop_reason            # "stop" or "max_tokens"
+    s.output.stop_reason            # "stop" or "max_tokens"; raises IndexError on an errored sample (no choices)
     s.scores, s.error, s.limit      # verdict, infra error, time/message limit hit
 ```
+
+`tools/collect_results.py` does this for many task dirs at once: run it with the client venv's python on model or task
+dirs, and it reads the newest `.eval` in each `logs/`, prints a summary table grouped by task (all-samples accuracy and
+stderr next to Inspect's errors-excluded figure, errors, truncations, limit hits), and with `--detail` the README
+Results block of each dir.
 
 If a run is interrupted, `inspect eval-retry logs/<file>.eval` reruns only unfinished samples and
 keeps completed ones. It reuses the log's task and args; env vars still apply.
@@ -343,6 +348,14 @@ Python.
   Qwen3.8-27B holds ~1.83M KV tokens per DP replica (~7× at full window) while the NVFP4 sibling holds ~4.43M;
   this dir used `--max-connections 16` for BF16 vs 32 for NVFP4. Read "GPU KV cache size" in serve.log before
   copying the sibling's concurrency.
+- **compressed-tensors `re:` targets are matched against vLLM's module names, not the checkpoint's.** vLLM 0.32.0's
+  `apply_vllm_mapper` rewrites plain layer paths in a quantization config through the model's `hf_to_vllm_mapper` but
+  leaves `re:` patterns as written. GLM-5.3-Flash checkpoints store `model.language_model.layers.N...` while vLLM names
+  the modules `language_model.model.layers.N...`, so an LLM Compressor target like
+  `re:.*language_model\.layers\.\d+\.mlp\.(gate|up|down)_proj$` matches nothing: those layers are built unquantized
+  and loading fails with `KeyError: 'layers.0.mlp.down_proj.weight_scale'`. Fix the checkpoint's regexes so they do
+  not depend on the prefix (`re:.*layers\.\d+\.mlp\...`), then check offline that every non-expert module with a
+  `weight_scale` in `model.safetensors.index.json` matches a target and none without one does.
 
 ## 10. Conventions established in the task directories
 
@@ -391,6 +404,28 @@ revert these departures:
   Muse Spark support is not in a vLLM release, so `local_orchestrator.sh` runs `serve.sh` inside a podman image built
   from the vLLM branch (see `local_env_notes.md`) through `tools/vllm_server.sh`; the dirs were created on a host without the GPUs to run them and
   have no results or requirements files yet.
+- **GLM-5.3-Flash pair** (`zai-org_GLM-5.3-Flash`, the native FP8 model, and `RedHatAI_GLM-5.3-Flash-MXFP4xFP8`, its
+  MXFP4-weight / FP8-activation quantization): two copies of deepswe-1.1, swe-bench-verified and terminal-bench-2.1,
+  written on 2026-10-27 for a like-for-like comparison on one 8x H200 host. Per task the four files are identical in
+  the two dirs apart from the `MODEL` default and the checkpoint comments; keep them that way (an edit to one copy goes
+  into the other). `serve.sh` takes the base recipe's Hopper flags (one TP=8 replica, MTP with 5 draft tokens, `glm47`
+  parsers, `--no-enable-flashinfer-autotune`) with the KV cache pinned to BF16 (the recipe's `--kv-cache-dtype fp8` is
+  Blackwell-only for this model), `--max-model-len 262144` and `--language-model-only`; served from the
+  `docker.io/vllm/vllm-openai:v0.32.0` podman image (the first release whose registry carries `glm5_next`) through
+  `tools/vllm_server.sh`, the Muse-Spark-Open way; concurrency defaults copied from the
+  `RedHatAI_GLM-5.3-Flash-NVFP4` runs (48 / 48 / 89) with a note to check the KV pool in serve.log first, since BF16 KV
+  halves it. The MXFP4xFP8 checkpoint was not public on 2026-10-27 (uploading under `inference-optimization/`), so
+  the READMEs ask to verify its `quantization_config` and `generation_config.json` and to record the revision before
+  the run. Both dirs ran on 2026-10-27/28 (FP8) and 2026-11-10/11 (MXFP4xFP8) at the defaults (KV pool 6.5M and 7.9M
+  tokens, enough for 48 / 48 / 89). The MXFP4xFP8 run used `inference-optimization/GLM-5.3-Flash-MXFP4xFP8` @ `662b3cc`
+  served from a local copy whose `config.json` regexes were fixed (section 9, compressed-tensors `re:` targets); the
+  fix is in the model repo at `d5ea13e` (only `config.json` changed), the revision the READMEs record, under the served name `RedHatAI/GLM-5.3-Flash-MXFP4xFP8`. The pair also carries gpqa-diamond (3 epochs), aime-2026 (8) and mmlu-pro (1), added on
+  2026-11-19 at the user's request (epochs too): same `serve.sh` and orchestrator as the agentic dirs (one TP=8
+  replica, MTP, BF16 KV) with the inspect_evals client, `--reasoning-effort max` and `--max-tokens 163840` (the card's
+  single-turn generation cap, stated for HLE). Both models ran them on 2026-11-20 (about 35 min AIME, 1 h GPQA, 2 h 45 min MMLU-Pro per model
+  on 8x H200, KV pool far above need); 0.5-1% of the answers still hit the 163840 cap (AIME problem 15 in 6 of 8 epochs for
+  both models), so a lower cap would cost accuracy. The `RedHatAI_GLM-5.3-Flash-NVFP4` dirs (B200, vLLM nightly, FP8 KV,
+  TP=4 for swe-bench-verified) are a different run and not part of the pair.
 - **Serving topology for multi-turn tasks.** swe-bench-*, deepswe-1.1, bfcl, tau2-bench and tau3-bench
   export `TP=8 DP=1` in `local_orchestrator.sh` instead of TP=2 × DP=4. vLLM's prefix cache is per replica, and
   DP routes each turn to a random replica, so agent histories would be prefilled again on every turn. `serve.sh`
@@ -468,6 +503,17 @@ and `amd_Qwen3.8-27B-Quark-AWQ-MXFP4` copies of these tasks ran before the fixes
     exclude `solution/` from the public mirror (issue drafted for harbor-framework/terminal-bench-2-1). Protocol
     chosen with the user for that run: rerun the leaked sample and every time-limit failure once at a higher
     `--time-limit` via `--sample-id`, audit the rerun, and count any repeat leak as a failure.
+  - GLM-5.3-Flash-MXFP4xFP8 (2026-11): three leaked passes in one run, through three more routes. `raman-fitting`
+    web-searched, found `harbor-framework/terminal-bench-2` on GitHub and fetched its own `tests/` and
+    `solution/solve.sh`. `extract-elf` found the Terminal-Bench 1 copy of the same task
+    (`laude-institute/terminal-bench` → `harbor-framework/terminal-bench-1`, `original-tasks/<name>/`, with
+    `solution.sh` and the reference inside `tests/test_outputs.py`). `fix-ocaml-gc` downloaded OCaml's upstream history,
+    found the commit the task tree was cut from and diffed against it to locate the injected bug. So search for
+    fetches of either Terminal-Bench repo (and the HF mirrors), and for tasks built on a real project, for the
+    project's own upstream source at the base commit. The FP8 base model's run (2026-10) leaked two other samples
+    through the same two Terminal-Bench routes (`kv-store-grpc` from the TB1 repo, `mteb-retrieve` from
+    `harbor-framework/terminal-bench-2`): both models scored 0.831 raw, 0.809 and 0.798 leak-adjusted. Which samples
+    leak differs from run to run, so compare leak-adjusted numbers.
 - **livecodebench.** The tasks set no network policy, so the agent has internet (the fork changes nothing). Audit
   for lookups of the problem's published solutions.
 - **Any new task with tools.** Check each `task.toml` network policy against what the runner enforces (after a run,
@@ -480,6 +526,12 @@ and `amd_Qwen3.8-27B-Quark-AWQ-MXFP4` copies of these tasks ran before the fixes
 
 **Audit after every run, before you fill Results.** Scan every tool call of every sample in the final `.eval`
 logs. Read `sample.events`, not `sample.messages`: context compaction drops early turns from the messages.
+
+`tools/leak_audit.py` runs this scan (plus the canary check below) over `.eval` files or log dirs and prints every hit
+with the sample's score; run it with the client venv's python, `--offline` for tasks whose agents must have no network,
+`--out hits.jsonl` to keep the hits for hand review. It finds the hits; deciding which are leaks is still yours.
+Run it on the final `.eval` only, not on a `logs/` dir that still holds a superseded run: its hits then mix both runs
+(each hit's `log` field says which), and a leak in the final run is easy to misattribute or miss.
 
 ```python
 import json, re
