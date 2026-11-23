@@ -1,0 +1,227 @@
+{
+  "draft": {
+    "repo": "shanjiaz/GLM-5.3-DFlash2-4epoch-Agentic10k-OMP-16k",
+    "revision": "69e879bb4164969d6194f456cced7eeab54a38c3",
+    "fine_tune_step": 8090,
+    "weight_sha256": "d80830ea0074a9e5454838d4cec9469f832135f334b316eccccd335b2bd753c5",
+    "checkpoint_access": "Authorized Hugging Face access required."
+  },
+  "verifier": {
+    "repo": "zai-org/GLM-5.3",
+    "revision": "ba32f8c19c8738e2c57c71798c601d477a7bf844",
+    "weight_manifest_sha256": "477840676d7ad6cd675269cd0c0de70b802ce255cc366620789a5d0c17a560f3"
+  },
+  "runtime": {
+    "vllm_version": "0.34.0",
+    "vllm_commit": "g62d4bc3c7",
+    "torch_version": "2.14.0+cu130",
+    "flashinfer_version": "0.7.3",
+    "wheel_record_sha256": "2712ada0c011c41d455f20b31278023da9887377804afe048b401acb4be4e3f7",
+    "runtime_source_patched": false,
+    "inspect_ai": "0.3.283",
+    "inspect_harbor": "1.0.0"
+  },
+  "configuration": {
+    "gpu": "NVIDIA B300 SXM6 AC",
+    "gpu_count": 8,
+    "tensor_parallel_size": 8,
+    "data_parallel_size": 1,
+    "verifier_weights": "native FP8",
+    "compute_dtype": "bfloat16",
+    "verifier_kv_cache_dtype": "fp8",
+    "draft_kv_cache_dtype": "fp8",
+    "max_model_len": 262144,
+    "max_num_seqs": 128,
+    "max_num_batched_tokens_effective": 16384,
+    "gpu_memory_utilization": 0.85,
+    "prefix_caching": true,
+    "cudagraph_mode": "FULL_AND_PIECEWISE",
+    "speculative_method": "dflash",
+    "draft_architecture": "DFlash2",
+    "draft_tokens": 8,
+    "native_block_size": 9,
+    "adaptive_verification": false,
+    "served_model_alias": "zai-org/GLM-5.3",
+    "model_class_override": {
+      "GlmMoeDsaForCausalLM": "vllm.model_executor.models.deepseek_v2:GlmMoeDsaForCausalLM"
+    },
+    "tokenizer_mode": "glm5_next",
+    "reasoning_and_tool_parser": "glm47",
+    "temperature": 1,
+    "top_p": 0.95,
+    "reasoning_effort": "max",
+    "max_output_tokens_per_turn": 65536,
+    "concurrency": 20,
+    "max_sandboxes": 20,
+    "task_time_limit_seconds": 7200,
+    "client_timeout_seconds": 7200,
+    "epochs": 1,
+    "task_retries": 0,
+    "per_request_metrics": "detailed",
+    "return_token_ids": true
+  },
+  "dataset": {
+    "task": "inspect_harbor/terminal_bench_2_1",
+    "package": "terminal-bench/terminal-bench-2-1",
+    "digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "attempted_tasks": 89
+  },
+  "observed_acceptance": {
+    "model_responses": 4363,
+    "metric_responses": 4363,
+    "model_api_errors": 0,
+    "missing_metrics": 0,
+    "corrupt_metrics": 0,
+    "collapsed_calls": 0,
+    "verification_rounds": 2747697,
+    "accepted_draft_tokens": 5710274,
+    "proposed_draft_tokens": 21981576,
+    "pooled_acceptance_length": 3.0782036738403105,
+    "draft_acceptance_rate": 0.2597754592300388,
+    "mean_per_call_acceptance_length": 3.7902078738803566,
+    "median_per_call_acceptance_length": 3.468287526427061,
+    "acceptance_histogram": {
+      "0": 854517,
+      "1": 624671,
+      "2": 413610,
+      "3": 266870,
+      "4": 172592,
+      "5": 114242,
+      "6": 78651,
+      "7": 56063,
+      "8": 166481
+    },
+    "smoke_and_canary_excluded": true,
+    "workload_integrity": "Contains confirmed benchmark-file acquisition; not a clean benchmark claim.",
+    "pooling_policy": "Include every valid recorded model response, including calls from failed, incomplete, or errored tasks; exclude separate smoke and health probes."
+  },
+  "per_position": {
+    "numbering": "One-based positions 1 through 8; overall rate denominator is all verification rounds.",
+    "rows": [
+      {
+        "position": 1,
+        "overall_acceptance_rate": 0.6890061022012253,
+        "conditional_acceptance_rate": 0.6890061022012253
+      },
+      {
+        "position": 2,
+        "overall_acceptance_rate": 0.46166262146080883,
+        "conditional_acceptance_rate": 0.6700414118044771
+      },
+      {
+        "position": 3,
+        "overall_acceptance_rate": 0.31113292331723624,
+        "conditional_acceptance_rate": 0.6739400351120883
+      },
+      {
+        "position": 4,
+        "overall_acceptance_rate": 0.21400794920255034,
+        "conditional_acceptance_rate": 0.6878344693349739
+      },
+      {
+        "position": 5,
+        "overall_acceptance_rate": 0.1511946186206121,
+        "conditional_acceptance_rate": 0.7064906662766632
+      },
+      {
+        "position": 6,
+        "overall_acceptance_rate": 0.10961725401308806,
+        "conditional_acceptance_rate": 0.7250076425547075
+      },
+      {
+        "position": 7,
+        "overall_acceptance_rate": 0.08099291879708716,
+        "conditional_acceptance_rate": 0.7388701671674496
+      },
+      {
+        "position": 8,
+        "overall_acceptance_rate": 0.06058928622770269,
+        "conditional_acceptance_rate": 0.7480812783090086
+      }
+    ]
+  },
+  "integrity_audit": {
+    "status": "confirmed_leaks_with_unresolved_context",
+    "samples_scanned": 89,
+    "tool_calls_scanned": 5030,
+    "attachment_references_resolved": 3941,
+    "unresolved_attachment_references": 0,
+    "broad_candidates_categorized": 611,
+    "contextual_review_complete": false,
+    "ordinary_candidates_requiring_context": 112,
+    "truncated_tool_results": 43,
+    "confirmed_affected_trajectories": [
+      {
+        "task_id": "terminal-bench/extract-elf",
+        "epoch": 1,
+        "finding": "Acquired its own hidden benchmark tests and used downloaded reference material for verification."
+      },
+      {
+        "task_id": "terminal-bench/protein-assembly",
+        "epoch": 1,
+        "finding": "Acquired its own hidden tests and reference source, then executed gold test code against its artifact."
+      }
+    ],
+    "scope_note": "Trajectory context is disclosed for the acceptance record; task completion and task scores are not acceptance success criteria."
+  },
+  "posthoc_diagnostic_excluding_two_confirmed_contaminated_tasks": {
+    "task_cohort": 87,
+    "calls": 4280,
+    "steps": 2704958,
+    "accepted": 5619466,
+    "proposed": 21639664,
+    "acceptance_length": 3.077468855338974,
+    "acceptance_rate": 0.25968360691737175,
+    "cohort_note": "Sensitivity diagnostic on a different 87-trajectory cohort; includes the compaction-error trajectory and does not certify the remaining trajectories clean."
+  },
+  "historical_reference": {
+    "url": "https://github.com/neuralmagic/evals-refresh/blob/ce503c3fc45da55dd3ac32a9f5257acff8128f32/RedHatAI_GLM-5.3-speculator.dflash2-preview/agentic-and-coding/terminal-bench-2.1/README.md",
+    "draft_revision": "3325df9c8ddad6b11afc9623ca6c3833d70fa4ef",
+    "pooled_acceptance_length_rounded": 2.938,
+    "same_exact_parent_checkpoint": false,
+    "matched_runtime_and_hardware": false,
+    "causal_or_speedup_claim": false
+  },
+  "phase_acceptance": {
+    "verified": false,
+    "status": "Thinking/response alignment is unverified; upstream region estimates are not validated results."
+  },
+  "artifact_sha256": {
+    "native_main_eval": "82b8568cc37630ed45e784082e7c8cd22264124ae4b10ae3624e25f4445f5928",
+    "native_calls_csv": "60c84d71e1f2aa1feae96327207fb307bb608853287bbafb84de18c1142cfd60",
+    "native_acceptance_audit": "2d0d9ba6f70c7b916a5ac1bf8f88f41dbc44fa57d275dc5cfa060653c3e146ba",
+    "native_acceptance_report": "e6d8da42f3b3a812f3ece19f0f847e6486661727456d956e16950a7cede9a77c",
+    "private_integrity_evidence": {
+      "audit_tools.py": {
+        "bytes": 10128,
+        "sha256": "1ea4f5c872c94cd40e9f5f1dfdf094a1d5bf9fa08e5ea85eef79ebaf34b4fb3e"
+      },
+      "tool-events.private.jsonl": {
+        "bytes": 13126456,
+        "sha256": "ef04c7f9e259b5b6c744bb7259cc1547be3976f13eb8a15d02e63a4ca4e8a480"
+      },
+      "candidates.private.jsonl": {
+        "bytes": 1322621,
+        "sha256": "3b7e28e0a56a5eb9d2820a168bbfbf53d298cb090284f84c634699ec5da802b0"
+      },
+      "extraction-summary.json": {
+        "bytes": 3012,
+        "sha256": "fd6f2ca87d8e56a7c1141ecb850175a75934a49adc4dee925a3594ebb89b50cf"
+      },
+      "review-high-risk.json": {
+        "bytes": 74861,
+        "sha256": "156aa01cf0e78d55b2913f7a63ed9429e1ce303c6c47f0b3b6c2cb4b8884068c"
+      },
+      "batch-a-review.sanitized.json": {
+        "bytes": 347472,
+        "sha256": "d6ee88c994c41221034336d0e63854381ab61caa587e1b3321082dcb982eacf4"
+      },
+      "review-B.sanitized.json": {
+        "bytes": 289077,
+        "sha256": "22048d32cf8fafb558bb0572740a07612525aba98cdfd11289a092839ce31502"
+      }
+    },
+    "analyze_spec_decode.py": "1ae499d28c6b9786d46b29f9cb6112024398fef97086a367caa6342e5162738a",
+    "monitor_spec_decode.py": "26236238f6966c325392cd3648fc9e9eb309110d92d439c22b309c83280180b0"
+  }
+}
